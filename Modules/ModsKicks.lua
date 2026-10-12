@@ -301,6 +301,7 @@ end)
 -- move/teleport our character. Visual/client-side features stay on.
 local PANIC_SWEEP = {
     Autofarm = true, EnablePathFarming = true, Autowalk = true, Pathfind = true,
+    RestartServer = true,
     Killaura = true, KillauraSwing = true, UseSkillPreemptively = true, AttackPlayers = true,
     DodgeAttacks = true, Fly = true, Noclip = true, ClickTeleport = true,
     ReturnOnDeath = true, ResetOnLowStamina = true, AutoJoinNewFloor = true,

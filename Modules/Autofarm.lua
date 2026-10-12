@@ -602,6 +602,7 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
 
     local target
     local shouldUpdateTarget = true
+    local noTargetSince
 
     local farmTick = function(deltaTime)
         local inputVec = Vector3.new(controls.D - controls.A, 0, controls.S - controls.W)
@@ -625,11 +626,28 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         end
 
         if not target then
+            -- Restart Server: nothing killable for RestartServerDelay seconds ->
+            -- save state and hop through the hub into a fresh server (boss respawns)
+            if Toggles.RestartServer and Toggles.RestartServer.Value then
+                noTargetSince = noTargetSince or tick()
+                if tick() - noTargetSince >= Options.RestartServerDelay.Value then
+                    if saveServerSwitchConfig and HumanoidRootPart then
+                        saveServerSwitchConfig(game.PlaceId, HumanoidRootPart.Position)
+                    end
+                    pcall(function()
+                        game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+                    end)
+                end
+            else
+                noTargetSince = nil
+            end
+
             if Toggles.UseWaypoint.Value and waypoint then
                 HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(waypoint.Position)
             end
             return
         end
+        noTargetSince = nil
 
         if isDead(target) or Options.IgnoreMobs.Value[target.Name] or tagGate(target) then
             shouldUpdateTarget = true
@@ -712,6 +730,19 @@ autofarmRadiusSlider:OnChanged(function(value)
     end
 end)
 
+Autofarm:AddToggle('RestartServer', {
+    Text = 'Restart server',
+    Tooltip = 'When no killable mobs remain, hop through the hub into a fresh server so the boss respawns'
+})
+Autofarm:AddSlider('RestartServerDelay', {
+    Text = 'Hop after empty',
+    Default = 10,
+    Min = 3,
+    Max = 60,
+    Rounding = 0,
+    Suffix = 's',
+    Compact = true
+})
 Autofarm:AddToggle('DodgeAttacks', { Text = 'Dodge attacks', Default = true })
 Autofarm:AddToggle('BlockSkillDamage', {
     Text = 'Block wave/tide damage',
