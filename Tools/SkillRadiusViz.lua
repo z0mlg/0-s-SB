@@ -1,263 +1,270 @@
---[[
-    Skill Radius Visualizer (standalone)
-
-    Draws a flat disc + radius label over every skill effect that spawns in the
-    world (whirlpools/domains, telegraph markers, moving wave hitboxes), plus a
-    probe circle you can park on a specific player to test farm coverage.
-
-    Config is at the top of this file. Runs on its own -- does NOT need the
-    Bluu loader.
-
-    Keybinds:
-        K   toggle all visuals on/off
-        U/I probe circle radius -/+ 5 studs
-        J   toggle the probe circle itself
-]]
+-- SkillRadiusViz :: standalone skill-range visualizer for Swordburst 2
+-- Run on its own (no main script needed):
+--   loadstring(game:HttpGet('https://raw.githubusercontent.com/z0mlg/Sb2Cheats/refs/heads/main/Tools/SkillRadiusViz.lua'))()
+--
+-- Keys:
+--   [ / ]   shrink/grow the ring (hold Shift for +-1, default +-5)
+--   N       cycle the ring anchor: you -> each player in the server -> you
+--   F       freeze a marker disc at the current ring (for comparing spots)
+--   V       clear frozen markers
+--   G       print how many mobs are inside the ring right now
+--   T       toggle auto-measure of newly spawned skill parts/models
+--   P       print the last measurements again
+--
+-- Output goes to rconsole when available, else the normal print output.
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
-local Workspace = game:GetService('Workspace')
-local CollectionService = game:GetService('CollectionService')
 local UserInputService = game:GetService('UserInputService')
+
 local LocalPlayer = Players.LocalPlayer
-local Mobs = Workspace:FindFirstChild('Mobs')
-local CharacterItems = Workspace:FindFirstChild('CharacterItems')
+local Mobs = workspace:WaitForChild('Mobs', 10)
 
--- ===================== CONFIG =====================
-local CONFIG = {
-    -- probe circle: put a name here (exact account name or display name) to
-    -- draw a circle under that player instead of yourself. '' = you.
-    WatchPlayer = '',
-
-    ProbeRadius = 60,      -- studs, adjustable in-game with U/I
-    ProbeEnabled = true,   -- show the probe circle (J toggles)
-    VisualsEnabled = true, -- master switch for skill discs (K toggles)
-
-    DiscLife = 12,         -- seconds a disc lingers after its source dies
-    MaxRadius = 400,       -- ignore footprints bigger than this (map clutter)
-    MinRadius = 1,         -- ignore footprints smaller than this
-}
--- ==================================================
-
-local DISC_COLOR = Color3.fromRGB(80, 170, 255)
-local TELEGRAPH_COLOR = Color3.fromRGB(255, 80, 80)
-local PROBE_COLOR = Color3.fromRGB(120, 255, 140)
-
-local DANGER_TAG_SUFFIXES = { ' Point', ' Blast', ' Ball', ' Strike', ' Meteor', ' Hitbox', ' Zone', ' Telegraph' }
-
-local visuals = {} -- source -> { disc, label, born, lastSeen, isTelegraph }
-
-local makeDisc = function(color)
-    local p = Instance.new('Part')
-    p.Name = 'SkillRadiusDisc'
-    p.Shape = Enum.PartType.Cylinder
-    p.Anchored = true
-    p.CanCollide = false
-    p.CanQuery = false
-    p.CanTouch = false
-    p.CastShadow = false
-    p.Transparency = 0.55
-    p.Material = Enum.Material.Neon
-    p.Color = color
-    p.Parent = Workspace
-
-    local gui = Instance.new('BillboardGui')
-    gui.Name = 'RadiusLabel'
-    gui.AlwaysOnTop = true
-    gui.Size = UDim2.fromOffset(160, 36)
-    gui.StudsOffset = Vector3.new(0, 3, 0)
-    gui.MaxDistance = 4000
-    local text = Instance.new('TextLabel')
-    text.BackgroundTransparency = 1
-    text.Size = UDim2.fromScale(1, 1)
-    text.Font = Enum.Font.GothamBold
-    text.TextSize = 16
-    text.TextColor3 = Color3.new(1, 1, 1)
-    text.TextStrokeTransparency = 0.4
-    text.TextStrokeColor3 = Color3.new(0, 0, 0)
-    text.Parent = gui
-    gui.Parent = p
-    return p, text
+local say
+if type(rconsolecreate) == 'function' and type(rconsoleprint) == 'function' then
+    pcall(rconsolecreate)
+    pcall(function() rconsolesettitle('SkillRadiusViz') end)
+    say = function(msg) pcall(rconsoleprint, msg .. '\n') end
+else
+    say = print
 end
+say('[SkillViz] loaded - keys: [ ] resize, N anchor, F mark, V clear, G mobs, T auto-measure, P reprint')
 
-local setDisc = function(entry, cf, radius)
-    local d = math.max(radius * 2, 0.5)
-    entry.disc.Size = Vector3.new(0.25, d, d)
-    entry.disc.CFrame = CFrame.new(cf.Position) * CFrame.Angles(0, 0, math.rad(90))
-    entry.label.Text = string.format('%s  R=%.1fm', entry.name or '?', radius)
-end
+-- ===================== RING =====================
+local ringRadius = 25
+local anchorPlayer = LocalPlayer
 
-local radiusOf = function(inst)
-    -- footprint radius on XZ (ignore height)
-    if inst:IsA('BasePart') then
-        local s = inst.Size
-        return math.max(s.X, s.Z) * 0.5, inst.CFrame
-    end
-    local ok, cf, size = pcall(function()
-        return inst:GetPivot(), inst:GetExtentsSize()
-    end)
-    if not ok or not cf or not size then return end
-    return math.max(size.X, size.Z) * 0.5, cf
-end
+local ring = Instance.new('Part')
+ring.Name = 'SkillVizRing'
+ring.Shape = Enum.PartType.Cylinder
+ring.Anchored = true
+ring.CanCollide = false
+ring.CanQuery = false
+ring.CanTouch = false
+ring.CastShadow = false
+ring.Transparency = 0.55
+ring.Material = Enum.Material.Neon
+ring.Color = Color3.fromRGB(80, 200, 255)
+ring.Parent = workspace
 
-local isInsideCharacterish = function(inst)
-    local m = inst:FindFirstAncestorOfClass('Model')
-    while m do
-        if m:FindFirstChildOfClass('Humanoid') then return true end
-        if Mobs and m:IsDescendantOf(Mobs) then return true end
-        if CharacterItems and m:IsDescendantOf(CharacterItems) then return true end
-        m = m:FindFirstAncestorOfClass('Model')
-    end
-    return false
-end
+local ringInner = ring:Clone()
+ringInner.Color = Color3.fromRGB(30, 90, 120)
+ringInner.Transparency = 0.75
+ringInner.Parent = workspace
 
-local track = function(inst, isTelegraph)
-    local r = radiusOf(inst)
-    if not r then return end
-    if r < CONFIG.MinRadius or r > CONFIG.MaxRadius then return end
-
-    local disc, label = makeDisc(isTelegraph and TELEGRAPH_COLOR or DISC_COLOR)
-    local entry = {
-        disc = disc,
-        label = label,
-        inst = inst,
-        name = inst.Name,
-        born = tick(),
-        lastSeen = tick(),
-        isTelegraph = isTelegraph,
-    }
-    visuals[inst] = entry
-end
-
-local tagIsDangerous = function(tag)
-    for _, suffix in next, DANGER_TAG_SUFFIXES do
-        if string.sub(tag, -#suffix) == suffix then return true end
-    end
-    return false
-end
-
-local tryTrackTelegraph = function(inst)
-    local ok, tags = pcall(inst.GetTags, inst)
-    if ok and type(tags) == 'table' then
-        for _, tag in next, tags do
-            if tagIsDangerous(tag) then
-                track(inst, true)
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local tryTrackSkillEffect = function(inst)
-    if not (inst:IsA('BasePart') or inst:IsA('Model')) then return end
-    if inst.Name == 'SkillRadiusDisc' or inst.Name == 'SkillRadiusProbe' then return end
-    if isInsideCharacterish(inst) then return end
-    if inst:IsDescendantOf(LocalPlayer.Character or script) then return end
-    if inst:IsA('Terrain') then return end
-    -- only fresh-looking spawns: anything that arrives already parented under
-    -- map folders is ignored by the name filter below
-    track(inst, false)
-end
-
-Workspace.DescendantAdded:Connect(function(inst)
-    task.defer(function()
-        if not inst:IsDescendantOf(Workspace) then return end
-        if tryTrackTelegraph(inst) then return end
-        if not (inst:IsA('BasePart') or inst:IsA('Model')) then return end
-        -- telegraph parts are handled above; only track things that look like
-        -- spawned skill assets (named clones at world root-ish depth)
-        local depth = 0
-        local p = inst.Parent
-        while p and p ~= Workspace do
-            depth += 1
-            p = p.Parent
-        end
-        if depth <= 1 then
-            tryTrackSkillEffect(inst)
-        end
-    end)
-end)
-
--- per-frame: follow moving parts, expire dead ones, hide when disabled
-RunService.RenderStepped:Connect(function()
-    local now = tick()
-    for inst, entry in next, visuals do
-        if not entry.disc.Parent then
-            visuals[inst] = nil
-            continue
-        end
-
-        if not CONFIG.VisualsEnabled then
-            entry.disc.Transparency = 1
-            entry.label.Visible = false
-            continue
-        end
-
-        if inst and inst:IsDescendantOf(Workspace) then
-            entry.lastSeen = now
-            local r, cf = radiusOf(inst)
-            if r then
-                entry.disc.Transparency = 0.55
-                entry.label.Visible = true
-                setDisc(entry, cf, math.min(r, CONFIG.MaxRadius))
-            end
-        elseif now - entry.lastSeen > CONFIG.DiscLife then
-            entry.disc:Destroy()
-            visuals[inst] = nil
-        else
-            -- fading out: dim it
-            entry.disc.Transparency = math.min(0.9, 0.55 + (now - entry.lastSeen) * 0.1)
-        end
-    end
-end)
-
--- ===================== PROBE CIRCLE =====================
-local probe, probeLabel
-local probeTarget = function()
-    if CONFIG.WatchPlayer ~= '' then
-        for _, p in next, Players:GetPlayers() do
-            if p.Name == CONFIG.WatchPlayer or p.DisplayName == CONFIG.WatchPlayer then
-                return p
-            end
-        end
-    end
-    return LocalPlayer
-end
-
-RunService.RenderStepped:Connect(function()
-    if not CONFIG.ProbeEnabled then
-        if probe then probe.Transparency = 1 probeLabel.Visible = false end
-        return
-    end
-    local target = probeTarget()
-    local root = target and target.Character and target.Character:FindFirstChild('HumanoidRootPart')
+local function updateRing()
+    local char = anchorPlayer and anchorPlayer.Character
+    local root = char and char:FindFirstChild('HumanoidRootPart')
     if not root then
-        if probe then probe.Transparency = 1 probeLabel.Visible = false end
+        ring.Transparency = 1
+        ringInner.Transparency = 1
         return
     end
-    if not probe then
-        probe, probeLabel = makeDisc(PROBE_COLOR)
-        probe.Name = 'SkillRadiusProbe'
+    ring.Transparency = 0.55
+    ringInner.Transparency = 0.75
+    local pos = root.Position - Vector3.new(0, root.Size.Y * 0.5 + 2.4, 0)
+    -- cylinder axis is X: rotate 90 deg around Z so it lies flat
+    ring.CFrame = CFrame.new(pos) * CFrame.Angles(0, 0, math.rad(90))
+    ring.Size = Vector3.new(0.2, ringRadius * 2, ringRadius * 2)
+    ringInner.CFrame = ring.CFrame
+    ringInner.Size = Vector3.new(0.15, (ringRadius - 1) * 2, (ringRadius - 1) * 2)
+end
+
+local function mobsInside()
+    local char = anchorPlayer and anchorPlayer.Character
+    local root = char and char:FindFirstChild('HumanoidRootPart')
+    if not (root and Mobs) then return 0, {} end
+    local count, names = 0, {}
+    for _, mob in ipairs(Mobs:GetChildren()) do
+        local mroot = mob:FindFirstChild('HumanoidRootPart')
+        if mroot then
+            local d = (Vector3.new(mroot.Position.X, 0, mroot.Position.Z)
+                - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+            if d <= ringRadius then
+                count += 1
+                names[mob.Name] = (names[mob.Name] or 0) + 1
+            end
+        end
     end
-    local entry = { disc = probe, label = probeLabel, name = target.Name .. ' (probe)' }
-    setDisc(entry, root.CFrame, CONFIG.ProbeRadius)
-    probe.Transparency = 0.45
-    probeLabel.Visible = true
+    return count, names
+end
+
+RunService.RenderStepped:Connect(updateRing)
+
+-- ===================== MARKERS =====================
+local markers = {}
+local function dropMarker()
+    local char = anchorPlayer and anchorPlayer.Character
+    local root = char and char:FindFirstChild('HumanoidRootPart')
+    if not root then return end
+    local m = Instance.new('Part')
+    m.Name = 'SkillVizMarker'
+    m.Shape = Enum.PartType.Cylinder
+    m.Anchored = true
+    m.CanCollide = false
+    m.CanQuery = false
+    m.CanTouch = false
+    m.Transparency = 0.6
+    m.Material = Enum.Material.Neon
+    m.Color = Color3.fromRGB(255, 200, 60)
+    m.CFrame = CFrame.new(root.Position - Vector3.new(0, root.Size.Y * 0.5 + 2.4, 0))
+        * CFrame.Angles(0, 0, math.rad(90))
+    m.Size = Vector3.new(0.15, ringRadius * 2, ringRadius * 2)
+    m.Parent = workspace
+    table.insert(markers, m)
+    say(string.format('[SkillViz] marker dropped r=%d @ %s', ringRadius, tostring(root.Position)))
+end
+
+-- ===================== AUTO-MEASURE =====================
+local autoMeasure = true
+local lastPrints = {}
+local tracked = setmetatable({}, { __mode = 'k' })
+
+local function visualFor(inst, radius, cf)
+    local v = tracked[inst]
+    if not v then
+        v = Instance.new('Part')
+        v.Name = 'SkillVizMeasure'
+        v.Shape = Enum.PartType.Cylinder
+        v.Anchored = true
+        v.CanCollide = false
+        v.CanQuery = false
+        v.CanTouch = false
+        v.Transparency = 0.55
+        v.Material = Enum.Material.Neon
+        v.Color = Color3.fromRGB(255, 80, 80)
+        v.Parent = workspace
+        tracked[inst] = v
+        task.delay(8, function()
+            if v and v.Parent then v:Destroy() end
+        end)
+    end
+    v.CFrame = CFrame.new(cf.Position) * CFrame.Angles(0, 0, math.rad(90))
+    v.Size = Vector3.new(0.2, radius * 2, radius * 2)
+    return v
+end
+
+local function nearestPlayerDist(pos)
+    local best = math.huge
+    for _, pl in ipairs(Players:GetPlayers()) do
+        local root = pl.Character and pl.Character:FindFirstChild('HumanoidRootPart')
+        if root then
+            best = math.min(best, (root.Position - pos).Magnitude)
+        end
+    end
+    return best
+end
+
+local function measure(inst)
+    if not inst:IsDescendantOf(workspace) then return end
+    -- skip characters, mobs and anything inside them
+    local model = inst:FindFirstAncestorOfClass('Model')
+    if model then
+        if model:FindFirstChildOfClass('Humanoid') then return end
+        if Mobs and inst:IsDescendantOf(Mobs) then return end
+    end
+    if inst:IsDescendantOf(LocalPlayer.Character or script) then return end
+
+    local cf, size
+    if inst:IsA('BasePart') then
+        cf, size = inst.CFrame, inst.Size
+    elseif inst:IsA('Model') then
+        local ok, c, s = pcall(function()
+            return inst:GetPivot(), inst:GetExtentsSize()
+        end)
+        if not ok then return end
+        cf, size = c, s
+    else
+        return
+    end
+
+    if nearestPlayerDist(cf.Position) > 350 then return end
+
+    -- resample over a few seconds: many skill visuals tween to full size
+    local delay = 0
+    for _, t in ipairs({ 0.1, 0.8, 2.0, 3.5 }) do
+        task.delay(t, function()
+            if not inst:IsDescendantOf(workspace) then return end
+            local ok, c, s = pcall(function()
+                if inst:IsA('BasePart') then
+                    return inst.CFrame, inst.Size
+                end
+                return inst:GetPivot(), inst:GetExtentsSize()
+            end)
+            if not ok then return end
+            cf, size = c, s
+            local r = math.max(size.X, size.Z) * 0.5
+            if r < 2 then return end
+            visualFor(inst, r, cf)
+            local line = string.format(
+                '[SkillViz] %s (%s) XZ-radius ~%.1f @ %.0f away',
+                inst:GetFullName(), inst.ClassName, r,
+                nearestPlayerDist(cf.Position)
+            )
+            if lastPrints[#lastPrints] ~= line then
+                table.insert(lastPrints, line)
+                if #lastPrints > 15 then table.remove(lastPrints, 1) end
+                say(line)
+            end
+        end)
+        delay = t
+    end
+end
+
+workspace.DescendantAdded:Connect(function(inst)
+    if not autoMeasure then return end
+    if not (inst:IsA('BasePart') or inst:IsA('Model')) then return end
+    task.defer(measure, inst)
 end)
 
 -- ===================== KEYBINDS =====================
+local anchorList = {}
+local anchorIdx = 0
+
+local function rebuildAnchors()
+    anchorList = { LocalPlayer }
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl ~= LocalPlayer then table.insert(anchorList, pl) end
+    end
+    anchorIdx = math.min(anchorIdx, #anchorList)
+end
+rebuildAnchors()
+Players.PlayerAdded:Connect(rebuildAnchors)
+Players.PlayerRemoving:Connect(rebuildAnchors)
+
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if input.KeyCode == Enum.KeyCode.K then
-        CONFIG.VisualsEnabled = not CONFIG.VisualsEnabled
-    elseif input.KeyCode == Enum.KeyCode.J then
-        CONFIG.ProbeEnabled = not CONFIG.ProbeEnabled
-    elseif input.KeyCode == Enum.KeyCode.U then
-        CONFIG.ProbeRadius = math.max(5, CONFIG.ProbeRadius - 5)
-    elseif input.KeyCode == Enum.KeyCode.I then
-        CONFIG.ProbeRadius = CONFIG.ProbeRadius + 5
+    local shift = UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+        or UserInputService:IsKeyDown(Enum.KeyCode.RightShift)
+    local step = shift and 1 or 5
+
+    if input.KeyCode == Enum.KeyCode.RightBracket then
+        ringRadius = math.min(500, ringRadius + step)
+        say(('[SkillViz] radius = %d'):format(ringRadius))
+    elseif input.KeyCode == Enum.KeyCode.LeftBracket then
+        ringRadius = math.max(1, ringRadius - step)
+        say(('[SkillViz] radius = %d'):format(ringRadius))
+    elseif input.KeyCode == Enum.KeyCode.N then
+        rebuildAnchors()
+        anchorIdx = anchorIdx % #anchorList + 1
+        anchorPlayer = anchorList[anchorIdx]
+        say(('[SkillViz] ring anchored to %s'):format(anchorPlayer.Name))
+    elseif input.KeyCode == Enum.KeyCode.F then
+        dropMarker()
+    elseif input.KeyCode == Enum.KeyCode.V then
+        for _, m in ipairs(markers) do m:Destroy() end
+        markers = {}
+        say('[SkillViz] markers cleared')
+    elseif input.KeyCode == Enum.KeyCode.G then
+        local count, names = mobsInside()
+        local parts = {}
+        for n, c in pairs(names) do table.insert(parts, ('%sx %s'):format(c, n)) end
+        say(('[SkillViz] mobs inside r=%d: %d%s'):format(
+            ringRadius, count, #parts > 0 and (' - ' .. table.concat(parts, ', ')) or ''))
+    elseif input.KeyCode == Enum.KeyCode.T then
+        autoMeasure = not autoMeasure
+        say(('[SkillViz] auto-measure %s'):format(autoMeasure and 'ON' or 'OFF'))
+    elseif input.KeyCode == Enum.KeyCode.P then
+        for _, line in ipairs(lastPrints) do say(line) end
     end
 end)
-
-print('[SkillRadiusViz] loaded - K: toggle visuals | J: probe circle | U/I: probe radius -/+')
