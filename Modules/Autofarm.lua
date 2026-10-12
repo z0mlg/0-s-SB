@@ -171,8 +171,27 @@ local dodgeEnabled = function()
     return Toggles.DodgeAttacks and Toggles.DodgeAttacks.Value
 end
 
+-- +3: Touched fires on any limb, so the root must clear the edge by the
+-- character's half-width, not just sit on the border
 local dodgePadding = function()
-    return (Options.DodgePadding and Options.DodgePadding.Value) or 4
+    return ((Options.DodgePadding and Options.DodgePadding.Value) or 4) + 3
+end
+
+-- Client-reported skill damage: wave/tide/orb skills hit us via
+-- Base:LocalHit -> Event:FireServer('Mobs', { 'DamageSelf', ... }) from OUR
+-- client. Dropping that call nullifies every Touched-based attack outright.
+if type(hookmetamethod) == 'function' and type(getnamecallmethod) == 'function' then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, '__namecall', function(self, ...)
+        if self == Event and Toggles.BlockSkillDamage and Toggles.BlockSkillDamage.Value
+            and getnamecallmethod() == 'FireServer' then
+            local a1, a2 = ...
+            if a1 == 'Mobs' and type(a2) == 'table' and a2[1] == 'DamageSelf' then
+                return
+            end
+        end
+        return oldNamecall(self, ...)
+    end)
 end
 
 local dodgeDefaultRadius = function()
@@ -688,6 +707,11 @@ autofarmRadiusSlider:OnChanged(function(value)
 end)
 
 Autofarm:AddToggle('DodgeAttacks', { Text = 'Dodge attacks', Default = true })
+Autofarm:AddToggle('BlockSkillDamage', {
+    Text = 'Block wave/tide damage',
+    Default = true,
+    Tooltip = 'Drops the client-reported DamageSelf remote used by Touched skills (OmegaWave, Leviathan tides, PanStorm, GuardianBalls...)'
+})
 Autofarm:AddSlider('DodgePadding', {
     Text = 'Dodge padding',
     Default = 4,
