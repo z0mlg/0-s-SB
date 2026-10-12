@@ -90,6 +90,89 @@ do
     end)
 end
 
+ItemsBox:AddButton({
+    Text = 'Dump weapon models',
+    Func = function()
+        task.spawn(function()
+            local stash = Instance.new('Folder')
+            stash.Name = 'SwordModelDump'
+            stash.Parent = workspace
+
+            local grabbed = {}
+            local count = 0
+            local grab = function(inst, name)
+                if grabbed[name] then return end
+                local ok, clone = pcall(inst.Clone, inst)
+                if ok and clone then
+                    clone.Name = name
+                    clone.Parent = stash
+                    grabbed[name] = true
+                    count += 1
+                end
+            end
+
+            -- pass 1: nil-parented instances - the game keeps assets like
+            -- MainModule/Tagged/Weapons unloaded client-side
+            if type(getnilinstances) == 'function' then
+                local ok, nils = pcall(getnilinstances)
+                if ok then
+                    for _, inst in ipairs(nils) do
+                        if not (inst:IsA('Tool') or inst:IsA('Model')) then continue end
+                        local p, inAssets = inst, false
+                        while p do
+                            local n = p.Name
+                            if n == 'Weapons' or n == 'Items' or n == 'Assets' or n == 'Models' then
+                                inAssets = true
+                                break
+                            end
+                            p = p.Parent
+                        end
+                        if inAssets then
+                            grab(inst, inst.Name)
+                        end
+                    end
+                end
+            end
+
+            -- pass 2: equip-loop - the server builds each owned weapon's model
+            -- into workspace.CharacterItems.<uid>.RightWeapon on equip
+            local origItem = getItemById and getItemById(Equip.Right.Value)
+            local myFolder
+            local charItems = workspace:FindFirstChild('CharacterItems')
+            if charItems then
+                myFolder = charItems:FindFirstChild(tostring(LocalPlayer.UserId))
+            end
+
+            for _, item in ipairs(Inventory:GetChildren()) do
+                if grabbed[item.Name] then continue end
+                local data = Items[item.Name]
+                local class = data and data:FindFirstChild('Class')
+                if not (class and tostring(class.Value):find('Sword')) then continue end
+
+                local before = myFolder and myFolder:FindFirstChild('RightWeapon')
+                if not pcall(InvokeFunction, 'Equipment', { 'EquipWeapon', item, 'Right' }) then continue end
+
+                local weapon, deadline = before, tick() + 1.5
+                repeat
+                    task.wait(0.05)
+                    weapon = myFolder and myFolder:FindFirstChild('RightWeapon')
+                until (weapon and weapon ~= before) or tick() > deadline
+
+                if weapon then
+                    grab(weapon, item.Name)
+                end
+                task.wait(0.15) -- don't hammer the equip remote
+            end
+
+            if origItem then
+                pcall(InvokeFunction, 'Equipment', { 'EquipWeapon', origItem, 'Right' })
+            end
+
+            Library:Notify(`Dumped {count} weapon models into workspace.SwordModelDump - run saveinstance now`, 8)
+        end)
+    end,
+})
+
 end
 
 do
