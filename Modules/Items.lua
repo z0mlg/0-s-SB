@@ -111,6 +111,16 @@ ItemsBox:AddButton({
                 end
             end
 
+            -- pass 0: Database.Items - replicated item folders sometimes carry
+            -- the actual Tool/Model template as a child; check before anything
+            for _, data in ipairs(Items:GetChildren()) do
+                for _, child in ipairs(data:GetChildren()) do
+                    if child:IsA('Tool') or child:IsA('Model') then
+                        grab(child, data.Name)
+                    end
+                end
+            end
+
             -- pass 1: nil-parented instances - the game keeps assets like
             -- MainModule/Tagged/Weapons unloaded client-side
             if type(getnilinstances) == 'function' then
@@ -166,6 +176,25 @@ ItemsBox:AddButton({
 
             if origItem then
                 pcall(InvokeFunction, 'Equipment', { 'EquipWeapon', origItem, 'Right' })
+            end
+
+            -- pass 3: everyone else's equipped weapons - CharacterItems replicates
+            -- for every player, and mob/boss models carry their own blades
+            if charItems then
+                for _, folder in ipairs(charItems:GetChildren()) do
+                    for _, weapon in ipairs(folder:GetChildren()) do
+                        if weapon:IsA('Model') then
+                            grab(weapon, `{folder.Name}_{weapon.Name}`)
+                        end
+                    end
+                end
+            end
+            for _, mob in ipairs(Mobs:GetChildren()) do
+                for _, desc in ipairs(mob:GetDescendants()) do
+                    if desc:IsA('Tool') then
+                        grab(desc, `{mob.Name}_{desc.Name}`)
+                    end
+                end
             end
 
             Library:Notify(`Dumped {count} weapon models into workspace.SwordModelDump - run saveinstance now`, 8)
