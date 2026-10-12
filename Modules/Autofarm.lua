@@ -201,12 +201,15 @@ end
 -- marker/arg sizes often understate the real damage range (e.g. OceanGyzer's
 -- server hitbox, OmegaWave's wide wall) - scale zones up past the visual edge
 local dodgeScale = function()
-    -- hard floor of 2x: a 5x5 attack keeps us 10 studs out on X/Z minimum
-    return math.max(2, (Options.DodgeScale and Options.DodgeScale.Value) or 2)
+    return (Options.DodgeScale and Options.DodgeScale.Value) or 2
 end
 
 local addZone = function(zone)
     table.insert(DangerZones.List, zone)
+    -- dodge the same instant the attack is detected, not on the next farm tick
+    if DangerZones.ApplyNow then
+        task.spawn(pcall, DangerZones.ApplyNow)
+    end
     return zone
 end
 
@@ -564,17 +567,19 @@ task.spawn(function()
     end)
 end)
 
--- when autofarm is off, still nudge the character out of telegraphs
-RenderStepped:Connect(function()
+-- enforce every frame, before physics/touch processing, autofarm on or off --
+-- the farm loop runs after task.wait() and would otherwise lag a frame behind
+DangerZones.ApplyNow = function()
     if not dodgeEnabled() then return end
-    if Toggles.Autofarm and Toggles.Autofarm.Value then return end
-    if Humanoid.Health == 0 then return end
+    if not (HumanoidRootPart and Humanoid) or Humanoid.Health == 0 then return end
     local pos = HumanoidRootPart.Position
     local resolved = resolveDodge(pos)
     if resolved ~= pos then
         HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolved
     end
-end)
+end
+RunService.PreSimulation:Connect(function() pcall(DangerZones.ApplyNow) end)
+RenderStepped:Connect(function() pcall(DangerZones.ApplyNow) end)
 
 -- purge dead zones so the list can't grow forever when dodging is idle
 task.spawn(function()
@@ -733,7 +738,7 @@ Autofarm:AddSlider('DodgeScale', {
     Text = 'Zone size multiplier',
     Tooltip = 'Inflates every danger zone - server hitboxes are often bigger than the visual marker',
     Default = 2,
-    Min = 2,
+    Min = 1,
     Max = 5,
     Rounding = 1,
     Suffix = 'x',
