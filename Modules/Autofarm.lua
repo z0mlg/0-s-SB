@@ -302,7 +302,8 @@ local zoneHit = function(zone, x, z, now)
     local part = zone.Part
     local cf, size, shape
     if part and part:IsDescendantOf(workspace) then
-        cf, size, shape = part.CFrame, part.Size, part.Shape
+        cf, size = part.CFrame, part.Size
+        shape = part:IsA('Part') and part.Shape or nil -- MeshParts (Wave.Plane etc.) have no Shape
         zone.LastCF, zone.LastSize, zone.LastShape = cf, size, shape
     elseif zone.LastCF then
         zone.DeadAt = zone.DeadAt or now
@@ -330,8 +331,10 @@ local resolveDodge = function(pos)
         local hit = false
         local now = tick()
         for i = #list, 1, -1 do
-            local ex, ez = zoneHit(list[i], x, z, now)
-            if ex == 'dead' then
+            local ok, ex, ez = pcall(zoneHit, list[i], x, z, now)
+            -- a zone that errors once gets dropped, not retried every frame --
+            -- an unprotected error here would kill the whole autofarm loop
+            if not ok or ex == 'dead' then
                 table.remove(list, i)
             elseif ex then
                 x, z = ex, ez
@@ -569,11 +572,7 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
     local target
     local shouldUpdateTarget = true
 
-    while Toggles.Autofarm.Value do
-        local deltaTime = task.wait()
-
-        if Humanoid.Health == 0 then continue end
-
+    local farmTick = function(deltaTime)
         local inputVec = Vector3.new(controls.D - controls.A, 0, controls.S - controls.W)
         if inputVec.Magnitude ~= 0 then
             local flySpeed = 100
@@ -581,7 +580,7 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             local moveDelta = direction * flySpeed * deltaTime
             local movePos = HumanoidRootPart.Position + moveDelta * math.clamp(deltaTime * flySpeed / moveDelta.Magnitude, 0, 1)
             HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(movePos)
-            continue
+            return
         end
 
         if shouldUpdateTarget then
@@ -596,16 +595,16 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             if Toggles.UseWaypoint.Value and waypoint then
                 HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(waypoint.Position)
             end
-            continue
+            return
         end
 
         if isDead(target) or Options.IgnoreMobs.Value[target.Name] or tagGate(target) then
             shouldUpdateTarget = true
-            continue
+            return
         end
 
         local rootPart, radius, vertical, horizontal = calculateAutofarmOffset(target)
-        if not rootPart then continue end
+        if not rootPart then return end
 
 		-- if Options.AutofarmVerticalOffset.Value < 0 then
 		--     flipUpsideDown(HumanoidRootPart)
@@ -626,6 +625,16 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         end
 
         HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(targetPos)
+    end
+
+    while Toggles.Autofarm.Value do
+        local deltaTime = task.wait()
+
+        if Humanoid.Health == 0 then continue end
+
+        -- pcall so a bad mob/zone/part can never kill the farm thread
+        local ok, err = pcall(farmTick, deltaTime)
+        if not ok then warn('[Autofarm]', err) end
     end
 end)
 
