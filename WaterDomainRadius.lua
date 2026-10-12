@@ -130,6 +130,7 @@ if template then
     end
     -- real VFX clone at scale 1 so you see the actual footprint
     local preview = template:Clone()
+    preview.Name = 'WhirlpoolPreview' -- renamed so the live tracker ignores it
     preview:ScaleTo(1)
     preview:PivotTo(CFrame.new(center))
     preview.Parent = workspace
