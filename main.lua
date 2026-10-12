@@ -433,23 +433,24 @@ onHumanoidAdded()
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
     lastDeathCFrame = lastDeathCFrame or HumanoidRootPart.CFrame
     Character = newCharacter
-    Humanoid = Character:WaitForChild('Humanoid')
-    HumanoidRootPart = Character:WaitForChild('HumanoidRootPart')
+    HumanoidRootPart = Character:WaitForChild('HumanoidRootPart') -- first: it exists before Humanoid does
 
     -- INSTANT TELEPORT - as soon as HumanoidRootPart exists
     if lastDeathCFrame and Toggles.ReturnOnDeath.Value then
         HumanoidRootPart.CFrame = lastDeathCFrame
 
-        -- Keep forcing teleport for 0.5 seconds to override spawn location
+        -- Keep forcing teleport for a second to override spawn location
         local deathCFrame = lastDeathCFrame
         task.spawn(function()
-            local teleportUntil = tick() + 0.5
+            local teleportUntil = tick() + 1
             while tick() < teleportUntil do
                 HumanoidRootPart.CFrame = deathCFrame
                 task.wait()
             end
         end)
     end
+
+    Humanoid = Character:WaitForChild('Humanoid')
     
     Entity = Character:WaitForChild('Entity', 2)
     if not Entity then

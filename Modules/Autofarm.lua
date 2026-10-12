@@ -583,6 +583,8 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             return
         end
 
+        if lowHealthEscaping then return end -- emergency escape has movement priority
+
         if shouldUpdateTarget then
             shouldUpdateTarget = false
             target = getAutofarmTarget()

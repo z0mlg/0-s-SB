@@ -296,14 +296,17 @@ PathFarming:AddToggle('EnablePathFarming', {
             end
             
             local waypointPos = currentWaypoint.position
-            HumanoidRootPart.CFrame = CFrame.new(waypointPos)
-            
+            if not lowHealthEscaping then
+                HumanoidRootPart.CFrame = CFrame.new(waypointPos)
+            end
+
             local startTime = tick()
 
             while WaypointSystem.isRunning and Toggles.EnablePathFarming.Value and Toggles.Autofarm.Value do
                 task.wait(0.5)
 
                 if Humanoid.Health == 0 then break end
+                if lowHealthEscaping then continue end -- don't advance while hovering
                 if pathFarmClear(waypointPos, tick() - startTime) then break end
             end
             
@@ -313,7 +316,7 @@ PathFarming:AddToggle('EnablePathFarming', {
                 local priority = WaypointSystem.waypointPriorities[i] or 100
                 if priority < 100 then
                     local distanceToWaypoint = (HumanoidRootPart.Position - wp.position).Magnitude
-                    if distanceToWaypoint > 50 then
+                    if distanceToWaypoint > 50 and not lowHealthEscaping then
                         HumanoidRootPart.CFrame = CFrame.new(wp.position)
                     end
                     
@@ -323,6 +326,7 @@ PathFarming:AddToggle('EnablePathFarming', {
                         task.wait(0.5)
 
                         if Humanoid.Health == 0 then break end
+                        if lowHealthEscaping then continue end
                         if pathFarmClear(wp.position, tick() - priorityStartTime) then break end
                     end
                 end

@@ -304,6 +304,7 @@ local PANIC_SWEEP = {
     Killaura = true, KillauraSwing = true, UseSkillPreemptively = true, AttackPlayers = true,
     DodgeAttacks = true, Fly = true, Noclip = true, ClickTeleport = true,
     ReturnOnDeath = true, ResetOnLowStamina = true, AutoJoinNewFloor = true,
+    EscapeOnLowHealth = true,
     GoToPlayer = true, SendTrades = true,
 }
 

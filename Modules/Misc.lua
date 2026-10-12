@@ -313,6 +313,57 @@ Inventory.ChildAdded:Connect(queueEquipBestWeapon)
 Level.Changed:Connect(queueEquipBestWeapon)
 
 Misc2:AddToggle('ReturnOnDeath', { Text = 'Return on death' })
+
+-- Emergency escape: instead of dying (and losing the boss to the respawn wait
+-- or its despawn/reset), teleport straight up when HP drops, hover there until
+-- healed past the resume threshold or the max hover time, then drop back in.
+Misc2:AddToggle('EscapeOnLowHealth', {
+    Text = 'Emergency escape',
+    Tooltip = 'Teleport straight up when HP drops below the threshold instead of dying, drop back once healed'
+}):OnChanged(function(value)
+    if value and not pcall(function() return Health.MaxValue > 0 end) then
+        Library:Notify('Emergency escape: Health.MaxValue unavailable on this rig', 4)
+    end
+end)
+Misc2:AddSlider('EscapeBelowHealth', { Text = 'Escape below HP', Default = 25, Min = 5, Max = 90, Rounding = 0, Suffix = '%', Compact = true })
+Misc2:AddSlider('EscapeResumeHealth', { Text = 'Return above HP', Default = 60, Min = 10, Max = 100, Rounding = 0, Suffix = '%', Compact = true })
+Misc2:AddSlider('EscapeMaxTime', { Text = 'Escape max time', Default = 15, Min = 3, Max = 60, Rounding = 0, Suffix = 's', Compact = true })
+Misc2:AddSlider('EscapeHeight', { Text = 'Escape height', Default = 120, Min = 40, Max = 300, Rounding = 0, Suffix = 'm', Compact = true })
+
+lowHealthEscaping = false -- global: autofarm/pathfarm yield while we hover
+local escapePos
+local escapeStart
+
+RenderStepped:Connect(function()
+    pcall(function()
+        if not (Toggles.EscapeOnLowHealth and Toggles.EscapeOnLowHealth.Value)
+            or not HumanoidRootPart
+            or not (Health and Health.MaxValue and Health.MaxValue > 0)
+            or Humanoid.Health == 0 then
+            lowHealthEscaping = false
+            return
+        end
+
+        local frac = Health.Value / Health.MaxValue
+        if not lowHealthEscaping then
+            if frac > Options.EscapeBelowHealth.Value / 100 then return end
+            lowHealthEscaping = true
+            escapePos = HumanoidRootPart.Position
+            escapeStart = tick()
+            return
+        end
+
+        if frac >= math.max(Options.EscapeBelowHealth.Value, Options.EscapeResumeHealth.Value) / 100
+            or tick() - escapeStart >= Options.EscapeMaxTime.Value then
+            lowHealthEscaping = false
+            HumanoidRootPart.CFrame = CFrame.new(escapePos) -- drop back into the fight
+            return
+        end
+
+        HumanoidRootPart.CFrame = CFrame.new(escapePos + Vector3.new(0, Options.EscapeHeight.Value, 0))
+    end)
+end)
+
 Misc2:AddToggle('ResetOnLowStamina', { Text = 'Reset on low stamina' })
 
 Misc2:AddToggle('AutoJoinNewFloor', { Text = 'Auto join new floor' })
