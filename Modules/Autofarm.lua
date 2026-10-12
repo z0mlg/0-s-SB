@@ -179,6 +179,12 @@ local dodgeDefaultRadius = function()
     return (Options.DodgeRadius and Options.DodgeRadius.Value) or 20
 end
 
+-- marker/arg sizes often understate the real damage range (e.g. OceanGyzer's
+-- server hitbox, OmegaWave's wide wall) - scale zones up past the visual edge
+local dodgeScale = function()
+    return (Options.DodgeScale and Options.DodgeScale.Value) or 1.3
+end
+
 local addZone = function(zone)
     table.insert(DangerZones.List, zone)
     return zone
@@ -237,7 +243,7 @@ end
 -- circle hit: returns escape point on XZ or nil
 local circleZoneHit = function(zone, x, z)
     local dx, dz = x - zone.X, z - zone.Z
-    local rr = zone.R + dodgePadding()
+    local rr = zone.R * dodgeScale() + dodgePadding()
     local d2 = dx * dx + dz * dz
     if d2 >= rr * rr then return end
     local d = math.sqrt(d2)
@@ -249,13 +255,13 @@ end
 -- oriented box hit in local space; whichever local axis is most vertical in the
 -- world gets ignored, so flat discs and tilted telegraphs work the same.
 local boxZoneHit = function(cf, size, elliptical, x, z)
-    local pad = dodgePadding()
+    local pad, scale = dodgePadding(), dodgeScale()
     local rel = cf:PointToObjectSpace(Vector3.new(x, cf.Position.Y, z))
     local ax, ay, az = math.abs(cf.XVector.Y), math.abs(cf.YVector.Y), math.abs(cf.ZVector.Y)
     local skip = (ax >= ay and ax >= az) and 1 or (ay >= az and 2 or 3)
     local a, b = skip % 3 + 1, (skip + 1) % 3 + 1
     local comps = { rel.X, rel.Y, rel.Z }
-    local half = { size.X * 0.5 + pad, size.Y * 0.5 + pad, size.Z * 0.5 + pad }
+    local half = { size.X * 0.5 * scale + pad, size.Y * 0.5 * scale + pad, size.Z * 0.5 * scale + pad }
     local h1, h2 = half[a], half[b]
     if h1 <= 0 or h2 <= 0 then return end
     local c1, c2 = comps[a], comps[b]
@@ -438,7 +444,7 @@ local SkillZoneHandlers = {
         if typeof(pos) ~= 'Vector3' then return end
         local root = enemyRoot(enemy)
         local look = root and root.CFrame.LookVector or Vector3.new(0, 0, -1)
-        addSegmentZone(pos, pos + look * (type(dist) == 'number' and dist or 80), 16, 5.5)
+        addSegmentZone(pos, pos + look * (type(dist) == 'number' and dist or 80), 40, 5.5)
     end },
     GorillaSlam = { MakeImpact = function(enemy, cf)
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
@@ -698,6 +704,16 @@ Autofarm:AddSlider('DodgeRadius', {
     Rounding = 0,
     Suffix = 'm'
 })
+Autofarm:AddSlider('DodgeScale', {
+    Text = 'Zone size multiplier',
+    Tooltip = 'Inflates every danger zone - server hitboxes are often bigger than the visual marker',
+    Default = 1.3,
+    Min = 1,
+    Max = 3,
+    Rounding = 1,
+    Suffix = 'x',
+    Compact = true
+})
 
 local zoneVisuals = {}
 Autofarm:AddToggle('ShowDangerZones', { Text = 'Show danger zones' }):OnChanged(function()
@@ -707,23 +723,24 @@ Autofarm:AddToggle('ShowDangerZones', { Text = 'Show danger zones' }):OnChanged(
         for _, zone in next, DangerZones.List do
             if zone.Expires and now > zone.Expires then continue end
             local cf, size
-            if zone.Kind == 'point' then
-                cf = CFrame.new(zone.X, zone.Y or HumanoidRootPart.Position.Y, zone.Z)
-                size = Vector3.new(zone.R * 2, 0.2, zone.R * 2)
-            elseif zone.Kind == 'enemy' then
-                local root = zone.Enemy and zone.Enemy:FindFirstChild('HumanoidRootPart')
-                if root then
-                    cf = CFrame.new(root.Position)
-                    size = Vector3.new(zone.R * 2, 0.2, zone.R * 2)
-                end
+            if zone.Kind == 'point' or zone.Kind == 'enemy' then
+                local rr = zone.R * dodgeScale() + dodgePadding()
+                local root = zone.Kind == 'enemy' and zone.Enemy and zone.Enemy:FindFirstChild('HumanoidRootPart')
+                if zone.Kind == 'enemy' and not root then continue end
+                cf = zone.Kind == 'point' and CFrame.new(zone.X, zone.Y or HumanoidRootPart.Position.Y, zone.Z)
+                    or CFrame.new(root.Position)
+                size = Vector3.new(rr * 2, 0.2, rr * 2)
             elseif zone.Kind == 'box' then
-                cf, size = zone.CF, zone.Size
+                cf = zone.CF
+                size = zone.Size * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
             else
                 local part = zone.Part
                 if part and part:IsDescendantOf(workspace) then
-                    cf, size = part.CFrame, part.Size
+                    cf = part.CFrame
+                    size = part.Size * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
                 elseif zone.LastCF then
-                    cf, size = zone.LastCF, zone.LastSize
+                    cf = zone.LastCF
+                    size = zone.LastSize * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
                 end
             end
             if not cf then continue end
