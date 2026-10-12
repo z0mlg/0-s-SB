@@ -201,7 +201,8 @@ end
 -- marker/arg sizes often understate the real damage range (e.g. OceanGyzer's
 -- server hitbox, OmegaWave's wide wall) - scale zones up past the visual edge
 local dodgeScale = function()
-    return (Options.DodgeScale and Options.DodgeScale.Value) or 1.3
+    -- hard floor of 2x: a 5x5 attack keeps us 10 studs out on X/Z minimum
+    return math.max(2, (Options.DodgeScale and Options.DodgeScale.Value) or 2)
 end
 
 local addZone = function(zone)
@@ -731,9 +732,9 @@ Autofarm:AddSlider('DodgeRadius', {
 Autofarm:AddSlider('DodgeScale', {
     Text = 'Zone size multiplier',
     Tooltip = 'Inflates every danger zone - server hitboxes are often bigger than the visual marker',
-    Default = 1.3,
-    Min = 1,
-    Max = 3,
+    Default = 2,
+    Min = 2,
+    Max = 5,
     Rounding = 1,
     Suffix = 'x',
     Compact = true
