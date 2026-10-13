@@ -208,6 +208,7 @@ local PANIC_SWEEP = {
 
 local isPanicExempt = function(player)
     if player == LocalPlayer then return true end
+    if IN_BETWEEN then return true end -- reserved party server: everyone is your party
     if Options.PanicWhitelist and Options.PanicWhitelist.Value[player] then return true end
     local ok, friends = pcall(function() return LocalPlayer:IsFriendsWith(player.UserId) end)
     return ok and friends or false

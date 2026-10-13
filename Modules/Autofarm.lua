@@ -702,7 +702,8 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             -- Restart Server: wait for mobs to actually spawn first - the
             -- empty-timer only counts once we've seen a killable target this
             -- session, OR the give-up cap hit (truly dead server, bail anyway).
-            if Toggles.RestartServer and Toggles.RestartServer.Value then
+            -- The Between empties between every wave - never hop from there
+            if not IN_BETWEEN and Toggles.RestartServer and Toggles.RestartServer.Value then
                 local giveUpAfter = math.max(60, Options.RestartServerDelay.Value * 10)
                 if sawTarget or tick() - farmStart >= giveUpAfter then
                     noTargetSince = noTargetSince or tick()
@@ -1056,7 +1057,7 @@ local mobList = (function()
         return mobList
     end
 
-    return ({
+    local floorLists = {
         [540240728] = { -- Arcadia
             'Tremor',
             'Iris Dominus Dummy',
@@ -1332,15 +1333,44 @@ local mobList = (function()
             'Icy Snowman',
             'Dementor'
         },
-        [78945654064532] = { -- Challenge / The Between (wave defense)
-            'Rubricatus, The Sentinel of Order',
-            'Vaelith, the Riftborn',
-            'Nythrane, the Hollow Flame',
-            'Aegor, Warden of the Deep',
-            'Tremor',
-            'Dementor'
-        }
-    })[game.PlaceId] or {}
+    }
+
+    if not IN_BETWEEN then
+        return floorLists[game.PlaceId] or {}
+    end
+
+    -- The Between spawns waves from every floor's pool plus named minibosses /
+    -- bosses (WaveDefenseConfigs Normal + Elite): its own bosses first, then
+    -- the wave bosses, then every floor mob, de-duplicated
+    local list, seen = {}, {}
+    local add = function(name)
+        if not seen[name] then seen[name] = true; table.insert(list, name) end
+    end
+    for _, name in next, {
+        'Rubricatus, The Sentinel of Order', 'Vaelith, the Riftborn',
+        'Nythrane, the Hollow Flame', 'Aegor, Warden of the Deep',
+        'Corrupted Atheon', 'Atheon', 'Aeganatos, The Sunken Sovereign',
+        'Azeis, Spirit of the Eternal Blossom', 'Ramseis, Chef of Souls',
+        'Vyroth, The Frostflame', 'Terror Incarnate', 'Bob',
+        'Suspended Unborn', 'Radioactive Experiment', 'Duality Reaper',
+        'Za, the Eldest', 'Ra, the Enlightener', 'Da, the Demeanor', 'Ka, the Mischief',
+        'Count Dracula, Vlad Tepes', 'Headless Horseman', 'The Cucurbita',
+        'C-618 Uriotol, The Forgotten Hunter', 'Saurus, the All-Seeing',
+        'Grim, The Overseer', 'Baal, The Tormentor', 'Egnor, the Undead King',
+        'Magnor, the Necromancer', 'Gargoyle Reaper', 'Mortis the Flaming Sear',
+        'Smashroom the Mushroom Behemoth', 'Formaug the Jungle Giant',
+        'Gorrock the Grove Protector', 'Bulswick, the Elkwood Behemoth',
+        "Ra'thae the Ice King", 'Qerach the Forgotten Golem', 'Alpha Icewhal',
+        'Irath the Lion', "Sa'jun the Centurian Chieftain", 'Fire Scorpion',
+        'Pearl Guardian', 'Hippogriff', 'Frogazoid', 'Borik the BeeKeeper',
+        'Tworz, The Ancient', 'Kloff, Marauder of the Frost', 'Enraged Wendigo',
+        'Meatball Abomination', 'The Waiter', 'Rotling', 'Warlord',
+        'Rahjin the Thief King', 'Ruined Kobold Lord', 'Dire Wolf',
+    } do add(name) end
+    for _, names in next, floorLists do
+        for _, name in next, names do add(name) end
+    end
+    return list
 end)()
 
 -- Autofarm:AddButton({ Text = 'Copy moblist', Func = function()

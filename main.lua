@@ -27,6 +27,11 @@ end
 
 Function = game:GetService('ReplicatedStorage'):WaitForChild('Function')
 
+-- The Between: wave-defense party place. Everyone in the server is your party,
+-- and the field empties between waves - player/empty-server logic must not run.
+BETWEEN_PLACE = 78945654064532
+IN_BETWEEN = game.PlaceId == BETWEEN_PLACE
+
 -- ===================== OML AUTO FARM CONFIG =====================
 OML_FARM_PLACE = 573267292    -- Floor 9 / Va' Rok (where we farm)
 OML_RELOAD_PLACE = 659222129  -- Main menu / hub (teleport here to reload + repeat)
@@ -680,6 +685,7 @@ pcall(function() -- legacy shared flag armed every account - remove it
     if isfile and isfile('Bluu/Swordburst 2/restartgate') then delfile('Bluu/Swordburst 2/restartgate') end
 end)
 local joinGateArmed = (function()
+    if IN_BETWEEN then return false end -- the other players are your party
     if not (isfile and readfile) or not isfile(RESTART_GATE_FILE) then return false end
     local ok, flag = pcall(readfile, RESTART_GATE_FILE)
     return ok and flag == '1'
@@ -765,7 +771,7 @@ end
 -- Modules run as plain chunks that share this script's global env.
 local MODULES = {
     'Waypoints', 'Autofarm', 'Autowalk', 'Killaura', 'Cheats', 'Misc',
-    'ModsKicks', 'ServerHop', 'Items', 'DropsSwing', 'Crystals', 'ESP',
+    'ModsKicks', 'ServerHop', 'Items', 'DropsSwing', 'Crystals', 'ESP', 'TheBetween',
     'Settings',
     -- 'OMLFarm', -- floor-9 farm -> hub -> farm loop (disabled)
 }
