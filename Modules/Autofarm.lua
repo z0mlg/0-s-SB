@@ -57,6 +57,14 @@ tagGate = function(mob) -- skip already-tagged mobs only while tag mode is on
     return Toggles.TagMode ~= nil and Toggles.TagMode.Value and isTagged(mob)
 end
 
+-- The Between blackout wave: while the soul light is up, only mobs inside it
+-- are farmed and our stand point is kept inside the light (see TheBetween)
+local inBlackoutLight = function()
+    if not (IN_BETWEEN and BlackoutLight) then return end
+    if not (Toggles.BetweenBlackoutLight and Toggles.BetweenBlackoutLight.Value) then return end
+    return BlackoutLight()
+end
+
 local getAutofarmTarget = function()
     local radius = Options.AutofarmRadius.Value
     radius = (radius == Options.AutofarmRadius.Max) and math.huge or radius
@@ -69,6 +77,7 @@ local getAutofarmTarget = function()
     local useWaypoint = Toggles.UseWaypoint.Value
     local waypointPos = waypoint.Position
     local myPos = HumanoidRootPart.Position
+    local lightPos, lightRange = inBlackoutLight()
 
     for _, mob in next, Mobs:GetChildren() do
         local mobName = mob.Name
@@ -79,7 +88,9 @@ local getAutofarmTarget = function()
         local mobPos = mob:FindFirstChild('HumanoidRootPart') and mob.HumanoidRootPart.Position
         if not mobPos then continue end
 
-        if useWaypoint and (mobPos - waypointPos).Magnitude > radius then continue end
+        if lightPos then
+            if (mobPos - lightPos).Magnitude > lightRange then continue end
+        elseif useWaypoint and (mobPos - waypointPos).Magnitude > radius then continue end
 
         local dist = (mobPos - myPos).Magnitude
 
@@ -726,7 +737,10 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
                 noTargetSince = nil
             end
 
-            if Toggles.UseWaypoint.Value and waypoint then
+            local lightPos = inBlackoutLight()
+            if lightPos then
+                HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(lightPos)
+            elseif Toggles.UseWaypoint.Value and waypoint then
                 HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(waypoint.Position)
             end
             return
@@ -758,6 +772,17 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
 
         if horizontal > 0 and horizOffset.Magnitude ~= 0 then
             targetPos += horizOffset.Unit * horizontal
+        end
+
+        -- blackout: never stand outside the light - pull the point back toward
+        -- the orb if the target sits near its edge
+        local lightPos, lightRange = inBlackoutLight()
+        if lightPos then
+            local fromLight = targetPos - lightPos
+            local maxDist = math.max(lightRange - 4, 0)
+            if fromLight.Magnitude > maxDist then
+                targetPos = lightPos + fromLight.Unit * maxDist
+            end
         end
 
         HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(targetPos)

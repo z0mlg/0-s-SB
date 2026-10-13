@@ -22,6 +22,30 @@ Between:AddToggle('BetweenLeaveAtWave', {
 })
 Between:AddSlider('BetweenLeaveWave', { Text = 'Wave', Default = 30, Min = 1, Max = 100, Rounding = 0, Compact = true })
 
+Between:AddToggle('BetweenBlackoutLight', {
+    Text = 'Stay in soul light',
+    Default = true,
+    Tooltip = 'Blackout wave: stay near the light orb and only farm mobs inside its light'
+})
+
+-- Blackout wave: the orb is the only light source; its LightDuration attribute
+-- is both the remaining "Souls" count and the light radius (PointLight.Range).
+-- The orb instance arrives on ReplicateWave as ('StartReplicatedOrb', orb, max).
+BlackoutOrb = nil
+BlackoutLight = function()
+    local orb = BlackoutOrb
+    if not (orb and orb.Parent) then return end
+    local part = orb:FindFirstChild('Part')
+    if not part then return end
+    local range = orb:GetAttribute('LightDuration')
+    if type(range) ~= 'number' then
+        local light = part:FindFirstChildOfClass('PointLight')
+        range = light and light.Range
+    end
+    if not range or range <= 0 then return end
+    return part.Position, range
+end
+
 local attr = function(name, default)
     local v = workspace:GetAttribute(name)
     if v == nil then return default end
@@ -35,6 +59,8 @@ local updateLabel = function()
     local text = `Wave #{attr('Wave', 0)} ({attr('WaveDefenseMode', '?')})  |  Mobs left: {left}`
     text ..= `\nLives: {lives or '?'}  |  Time: {attr('WDRunTime', '-')}  |  Remnants: {attr('CurrencyEarned', 0)}`
     if countdown then text ..= `\nNext wave in: {countdown}` end
+    local _, lightRange = BlackoutLight()
+    if lightRange then text ..= `\nSoul light: {math.floor(lightRange)} studs` end
     waveLabel:SetText(text)
 end
 
@@ -43,6 +69,24 @@ for _, name in next, { 'Wave', 'MobsLeft', 'WaveProgressLeft', 'WaveCountdown', 
 end
 LocalPlayer:GetAttributeChangedSignal('Lives'):Connect(updateLabel)
 updateLabel()
+
+task.spawn(function()
+    local ReplicateWave = game:GetService('ReplicatedStorage'):WaitForChild('ReplicateWave', 30)
+    if not ReplicateWave then return end
+    ReplicateWave.OnClientEvent:Connect(function(waveType, event, a)
+        if event == 'StartReplicatedOrb' and typeof(a) == 'Instance' then
+            BlackoutOrb = a
+            a:GetAttributeChangedSignal('LightDuration'):Connect(updateLabel)
+            a.AncestryChanged:Connect(function(_, parent)
+                if not parent and BlackoutOrb == a then BlackoutOrb = nil end
+            end)
+            updateLabel()
+        elseif event == 'Stop' then
+            BlackoutOrb = nil
+            updateLabel()
+        end
+    end)
+end)
 
 -- revive as soon as we're dead and have lives; the server rejects it while
 -- we're alive, so retry until the new character spawns
