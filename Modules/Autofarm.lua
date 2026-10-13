@@ -1298,6 +1298,14 @@ local mobList = (function()
             'Glacius Howler',
             'Icy Snowman',
             'Dementor'
+        },
+        [78945654064532] = { -- Challenge / The Between (wave defense)
+            'Rubricatus, The Sentinel of Order',
+            'Vaelith, the Riftborn',
+            'Nythrane, the Hollow Flame',
+            'Aegor, Warden of the Deep',
+            'Tremor',
+            'Dementor'
         }
     })[game.PlaceId] or {}
 end)()
