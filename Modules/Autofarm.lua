@@ -165,11 +165,16 @@ local DangerZones = {
     LastSkillAt = 0,
 }
 
-local DANGER_TAG_SUFFIXES = {
-    ' Point', ' Blast', ' Ball', ' Strike', ' Meteor', ' Hitbox', ' Zone', ' Telegraph',
-    -- The Between (wave defense) bosses: Aegor / Rubricatus / Vaelith markers
-    ' Rock', ' Slam', ' Spike', ' Attack', ' Rift',
-}
+local DANGER_TAG_SUFFIXES = { ' Point', ' Blast', ' Ball', ' Strike', ' Meteor', ' Hitbox', ' Zone', ' Telegraph' }
+-- The Between (wave defense) bosses: Aegor / Rubricatus / Vaelith markers -
+-- these generic suffixes exist on normal floors too, so only apply there
+local BETWEEN_TAG_SUFFIXES = { ' Rock', ' Slam', ' Spike', ' Attack', ' Rift' }
+local ACTIVE_TAG_SUFFIXES = DANGER_TAG_SUFFIXES
+if IN_BETWEEN then
+    ACTIVE_TAG_SUFFIXES = {}
+    for _, s in next, DANGER_TAG_SUFFIXES do table.insert(ACTIVE_TAG_SUFFIXES, s) end
+    for _, s in next, BETWEEN_TAG_SUFFIXES do table.insert(ACTIVE_TAG_SUFFIXES, s) end
+end
 
 local dodgeEnabled = function()
     return Toggles.DodgeAttacks and Toggles.DodgeAttacks.Value
@@ -402,7 +407,7 @@ local tagIsDangerous = function(tag)
     for _, prefix in next, IGNORED_SKILL_TAGS do
         if string.sub(tag, 1, #prefix) == prefix then return false end
     end
-    for _, suffix in next, DANGER_TAG_SUFFIXES do
+    for _, suffix in next, ACTIVE_TAG_SUFFIXES do
         if string.sub(tag, -#suffix) == suffix then return true end
     end
     return false
@@ -451,7 +456,7 @@ task.defer(function()
 end)
 
 local hookSkillTags = function(skillName)
-    for _, suffix in next, DANGER_TAG_SUFFIXES do
+    for _, suffix in next, ACTIVE_TAG_SUFFIXES do
         local tag = skillName .. suffix
         if DangerZones.HookedTags[tag] then continue end
         DangerZones.HookedTags[tag] = true
@@ -619,6 +624,7 @@ end)
 -- event, ...). Lava's 'Warning' shakes the floor section that's about to turn
 -- to lava for <duration>s - zone its footprint for the warning + burn window.
 task.spawn(function()
+    if not IN_BETWEEN then return end -- ReplicateWave only exists there anyway
     local ReplicateWave = game:GetService('ReplicatedStorage'):WaitForChild('ReplicateWave', 30)
     if not ReplicateWave then return end
     ReplicateWave.OnClientEvent:Connect(function(waveType, event, model, duration)
