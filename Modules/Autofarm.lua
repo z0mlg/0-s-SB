@@ -733,7 +733,15 @@ end)
 Autofarm:AddToggle('RestartServer', {
     Text = 'Restart server',
     Tooltip = 'When no killable mobs remain, hop through the hub into a fresh server so the boss respawns'
-})
+}):OnChanged(function(value)
+    -- arms the main.lua join gate: while on, landing on a populated server means
+    -- block everyone (no exemptions) + re-hop BEFORE autofarm ever starts
+    if writefile and isfolder then
+        if not isfolder('Bluu') then makefolder('Bluu') end
+        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+        writefile('Bluu/Swordburst 2/restartgate', value and '1' or '0')
+    end
+end)
 Autofarm:AddSlider('RestartServerDelay', {
     Text = 'Hop after empty',
     Default = 10,

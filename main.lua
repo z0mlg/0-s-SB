@@ -607,6 +607,199 @@ UserInputService.InputEnded:Connect(function(key, gameProcessed)
     if gameProcessed or not controls[key.KeyCode.Name] then return end
     controls[key.KeyCode.Name] = 0
 end)
+
+-- ===================== BLOCK ENGINE =====================
+-- global so the join gate AND modules (panic, server hop, mod kicks) share it
+local CoreGui = game:GetService('CoreGui')
+GuiService = GuiService or game:GetService('GuiService')
+local VirtualInputManager = game:GetService('VirtualInputManager')
+
+local findBlockModal = function()
+    local overlay = CoreGui:FindFirstChild('FoundationOverlay')
+    if overlay then
+        local modal = overlay:FindFirstChild('BlockingModalScreen', true)
+        if modal and not modal:IsA('ModuleScript') then return modal end
+    end
+    for _, descendant in ipairs(CoreGui:GetDescendants()) do
+        if descendant.Name == 'BlockingModalScreen' and not descendant:IsA('ModuleScript') then
+            return descendant
+        end
+    end
+end
+
+local findBlockButton = function(modal)
+    for _, label in ipairs(modal:GetDescendants()) do
+        if label:IsA('TextLabel') and label.Text == 'Block' then
+            local parent = label.Parent
+            while parent and parent ~= modal do
+                if parent:IsA('GuiButton') then return parent end
+                parent = parent.Parent
+            end
+        end
+    end
+    -- Footer stack order: Cancel = 1, BlockAndReport = 2, Block = 3
+    local footer = modal:FindFirstChild('Footer', true)
+    local buttons = footer and footer:FindFirstChild('Buttons', true)
+    return buttons and buttons:FindFirstChild('3')
+end
+
+local clickBlockButton = function(button)
+    if firesignal then
+        pcall(firesignal, button.Activated)
+        pcall(firesignal, button.MouseButton1Click)
+    end
+    task.wait(0.3)
+    if not findBlockModal() then return end
+
+    GuiService.SelectedCoreObject = button
+    GuiService.SelectedObject = button
+    task.wait(0.15)
+    VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Return, false, game)
+    task.wait(0.05)
+    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Return, false, game)
+    task.wait(0.4)
+    if not findBlockModal() then return end
+
+    if getconnections then
+        for _, connection in ipairs(getconnections(button.Activated)) do
+            pcall(function() connection:Fire() end)
+            pcall(function() connection.Function(button) end)
+        end
+    end
+    task.wait(0.5)
+    if not findBlockModal() then return end
+
+    local pos = button.AbsolutePosition + button.AbsoluteSize / 2
+    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, true, game, 0)
+    task.wait(0.05)
+    VirtualInputManager:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 0)
+    task.wait(0.5)
+end
+
+isPlayerBlocked = function(player)
+    local ok, blocked = pcall(function()
+        return StarterGui:GetCore('GetBlockedUserIds')
+    end)
+    return ok and type(blocked) == 'table' and table.find(blocked, player.UserId) ~= nil
+end
+
+blockPlayer = function(player)
+    -- retries until the block is verified server-side; stops if the target
+    -- leaves (nothing left to block). 5s between each attempt.
+    while player.Parent do
+        if isPlayerBlocked(player) then return true end
+
+        StarterGui:SetCore('PromptBlockPlayer', player)
+
+        local modal
+        for _ = 1, 50 do
+            modal = findBlockModal()
+            if modal then break end
+            task.wait(0.1)
+        end
+
+        if modal then
+            local button = findBlockButton(modal)
+            if button then
+                clickBlockButton(button)
+            end
+        end
+
+        task.wait(0.5)
+        if isPlayerBlocked(player) then return true end
+
+        task.wait(5)
+    end
+    return true -- target left: nothing left to block
+end
+
+-- ===================== JOIN GATE =====================
+-- While RestartServer is on, landing on a populated server is a no-go: block
+-- every non-exempt player BEFORE modules/autofarm ever start, then bounce back
+-- through the hub into a fresh server. Repeats until we land somewhere empty.
+-- Zero exemptions: every non-local player counts, friends included.
+local joinGateArmed = (function()
+    if not (isfile and readfile) then return false end
+    local ok, flag = pcall(readfile, 'Bluu/Swordburst 2/restartgate')
+    return ok and flag == '1'
+end)()
+
+local isGateExempt = function(player)
+    -- restart gate: EVERYONE else is a threat - no friend/whitelist exemptions
+    return player == LocalPlayer
+end
+
+local lastGateTeleport
+local joinGateBlockAndHop = function()
+    -- if modules/autoload already spun automation up, kill it before blocking
+    -- (same suspicious-toggle list as the panic sweep: attacks + movement)
+    if Toggles then
+        for _, name in next, {
+            'Autofarm', 'Killaura', 'KillauraSwing', 'UseSkillPreemptively',
+            'AttackPlayers', 'SendTrades', 'EnablePathFarming', 'Autowalk',
+            'Pathfind', 'Fly', 'Noclip', 'ClickTeleport', 'DodgeAttacks',
+            'ReturnOnDeath', 'ResetOnLowStamina', 'AutoJoinNewFloor',
+            'GoToPlayer', 'EmergencyEscape',
+        } do
+            local t = Toggles[name]
+            if t and t.Value then pcall(function() t:SetValue(false) end) end
+        end
+    end
+    for _, p in next, Players:GetPlayers() do
+        if not isGateExempt(p) then
+            blockPlayer(p)
+            task.wait(5)
+        end
+    end
+    pcall(function()
+        if writefile and isfolder and HumanoidRootPart then
+            if not isfolder('Bluu') then makefolder('Bluu') end
+            if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+            local pos = HumanoidRootPart.Position
+            writefile('Bluu/Swordburst 2/serverswitch', game:GetService('HttpService'):JSONEncode({
+                active = true,
+                targetPlace = game.PlaceId,
+                position = { x = pos.X, y = pos.Y, z = pos.Z },
+            }))
+        end
+    end)
+    pcall(function()
+        if lastGateTeleport and tick() - lastGateTeleport < 30 then return end
+        lastGateTeleport = tick()
+        game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+    end)
+end
+
+if joinGateArmed then
+    -- hold module loading hostage until the server is empty
+    while true do
+        local offenders = {}
+        for _, p in next, Players:GetPlayers() do
+            if not isGateExempt(p) then table.insert(offenders, p) end
+        end
+        if #offenders == 0 then break end
+        warn(`[Bluu] Join gate: {#offenders} player(s) here - blocking and re-hopping`)
+        joinGateBlockAndHop()
+        task.wait(5) -- if the teleport didn't fire yet, re-evaluate
+    end
+
+    -- keep watching for the first 20s while modules/autoload spin up: anyone
+    -- who joins gets the same treatment so we never farm in front of them
+    task.spawn(function()
+        local deadline = tick() + 20
+        while tick() < deadline do
+            task.wait(0.5)
+            for _, p in next, Players:GetPlayers() do
+                if not isGateExempt(p) then
+                    warn('[Bluu] Join gate: late joiner - blocking and re-hopping')
+                    joinGateBlockAndHop()
+                    return
+                end
+            end
+        end
+    end)
+end
+
 -- ===================== MODULE LOADER =====================
 -- Modules run as plain chunks that share this script's global env.
 local MODULES = {
