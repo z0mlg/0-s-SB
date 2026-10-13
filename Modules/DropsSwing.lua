@@ -9,7 +9,6 @@ Rarities = { 'Common', 'Uncommon', 'Rare', 'Legendary', 'Tribute' }
 Drops:AddDropdown('AutoDismantle', { Text = 'Auto dismantle', Values = Rarities, Multi = true, AllowNull = true })
 
 Drops:AddInput('DropWebhook', { Text = 'Drop webhook', Placeholder = 'https://discord.com/api/webhooks/' })
-:OnChanged(sendTestMessage)
 
 Drops:AddToggle('PingInMessage', { Text = 'Ping in message' })
 

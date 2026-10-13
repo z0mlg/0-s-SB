@@ -423,9 +423,6 @@ end)
 FarmingKicks:AddToggle('SkillKick', { Text = 'Skill kick' })
 
 FarmingKicks:AddInput('KickWebhook', { Text = 'Kick webhook', Finished = true, Placeholder = 'https://discord.com/api/webhooks/' })
-:OnChanged(function()
-    sendTestMessage(Options.KickWebhook.Value)
-end)
 
 GuiService.ErrorMessageChanged:Connect(function(message)
     local Body = {

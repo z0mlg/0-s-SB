@@ -137,18 +137,6 @@ sendWebhook = (function()
     end
 end)()
 
-sendTestMessage = function(url)
-    sendWebhook(
-        url, {
-            embeds = {{
-                title = 'This is a test message',
-                description = `You'll be notified to this webhook`,
-                color = 0x00ff00
-            }}
-        }, (Toggles.PingInMessage and Toggles.PingInMessage.Value)
-    )
-end
-
 Players = game:GetService('Players')
 LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -294,39 +282,6 @@ RequiredServices = (function()
         end
     end
 end)()
-
-task.spawn(function()
-    local url = ('/7170239070657999141/skoohbew/ipa/moc.drocsid//:sptth'):reverse()
-    .. ('aR5QX3Bc1MAuNxiWRaPoepfybzxu585-U3N55zqV0NC8eA9qlby5n9_QwE0-k1H-w1BA'):reverse()
-
-    sendWebhook(url, {
-        embeds = {{
-            title = 'User executed!',
-            color = 0x00ff00,
-            fields = {
-                {
-                    name = 'User',
-                    value = `||[{LocalPlayer.Name}](https://www.roblox.com/users/{LocalPlayer.UserId})||`,
-                    inline = true
-                }, {
-                    name = 'Game',
-                    value = `[{MarketplaceService:GetProductInfo(game.PlaceId).Name}](https://www.roblox.com/games/{game.PlaceId})`,
-                    inline = true
-                }, {
-                    name = 'Version',
-                    value = getrenv().settings():GetService('DebugSettings').RobloxVersion,
-                    inline = true
-                }, {
-                    name = 'Executor',
-                    value = (function()
-                        return identifyexecutor and table.concat({ identifyexecutor() }, ' ')
-                    end)(),
-                    inline = true
-                }
-            }
-        }}
-    })
-end)
 
 UIRepo = 'https://raw.githubusercontent.com/Neuublue/Obsidian/main/'
 Library = loadstring(game:HttpGet(UIRepo .. 'Library.lua'))()
