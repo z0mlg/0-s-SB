@@ -376,7 +376,28 @@ local resolveDodge = function(pos)
 end
 DangerZones.Resolve = resolveDodge
 
+-- Bosses whose attacks can't reach our farm spot (we sit under the arena):
+-- only the listed skills get zoned, every other cast is ignored entirely -
+-- no zone, no caster zone, no Touched-hitbox window, no marker tags.
+local BOSS_DODGE_ONLY = {
+    Aeganatos = { OceanGyzer = true },
+}
+local IGNORED_SKILL_TAGS = { 'OmegaWave' } -- known marker prefixes of ignored skills
+
+bossSkillIgnored = function(enemy, skillName)
+    local name = typeof(enemy) == 'Instance' and enemy.Name or ''
+    for boss, keep in next, BOSS_DODGE_ONLY do
+        if string.find(name, boss, 1, true) then
+            return not keep[skillName]
+        end
+    end
+    return false
+end
+
 local tagIsDangerous = function(tag)
+    for _, prefix in next, IGNORED_SKILL_TAGS do
+        if string.sub(tag, 1, #prefix) == prefix then return false end
+    end
     for _, suffix in next, DANGER_TAG_SUFFIXES do
         if string.sub(tag, -#suffix) == suffix then return true end
     end
@@ -571,6 +592,7 @@ task.spawn(function()
     if not ReplicateSkill then return end
 
     ReplicateSkill.OnClientEvent:Connect(function(enemy, phase, skillName, ...)
+        if bossSkillIgnored(enemy, skillName) then return end
         DangerZones.LastSkillAt = tick()
         if type(skillName) ~= 'string' then return end
         hookSkillTags(skillName)
