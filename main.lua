@@ -47,6 +47,65 @@ if game.PlaceId == OML_RELOAD_PLACE then -- Main menu: log in to bounce back to 
     return
 end
 
+getgenv().BluuRejoining = nil -- fresh join: rejoin failsafe is armed again
+
+-- ===================== STUCK-JOIN FAILSAFE =====================
+-- If the game's own client init dies (e.g. CardinalClient.LoadingScreen
+-- errors) the load never finishes and the WaitForChild chain below hangs
+-- forever. On a matching console error, or if bootstrap still isn't done
+-- after ~75s, save our floor+position and bounce through the hub into a
+-- fresh server.
+local joinStart = tick()
+
+local rejoinFreshServer
+rejoinFreshServer = function()
+    if getgenv().BluuRejoining then return end
+    getgenv().BluuRejoining = true
+    warn('[Bluu] Join failed - rejoining a fresh server')
+    pcall(function()
+        if not (isfolder and writefile and HumanoidRootPart) then return end
+        if not isfolder('Bluu') then makefolder('Bluu') end
+        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+        local pos = HumanoidRootPart.Position
+        writefile('Bluu/Swordburst 2/serverswitch', game:GetService('HttpService'):JSONEncode({
+            active = true,
+            targetPlace = game.PlaceId,
+            position = { x = pos.X, y = pos.Y, z = pos.Z },
+        }))
+    end)
+    for _ = 1, 2 do
+        local ok = pcall(function()
+            game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+        end)
+        if ok then return end
+        task.wait(15)
+    end
+end
+
+-- game-init crashes surface in the console; only fresh-join errors count
+game:GetService('LogService').MessageOut:Connect(function(message, messageType)
+    if tick() - joinStart > 120 then return end
+    if messageType ~= Enum.MessageType.MessageError then return end
+    if message:find('Cardinal') or message:find('LoadingScreen') then
+        task.spawn(rejoinFreshServer)
+    end
+end)
+
+-- bootstrap watchdog: Profile + Entity must exist within ~75s or we're stuck
+task.spawn(function()
+    local RS = game:GetService('ReplicatedStorage')
+    for _ = 1, 15 do
+        task.wait(5)
+        local character = LocalPlayer and LocalPlayer.Character
+        local profiles = RS:FindFirstChild('Profiles')
+        if profiles and LocalPlayer and profiles:FindFirstChild(LocalPlayer.Name)
+            and character and character:FindFirstChild('Entity') then
+            return -- joined fine
+        end
+    end
+    rejoinFreshServer()
+end)
+
 sendWebhook = (function()
     local http_request = (syn and syn.request) or (fluxus and fluxus.request) or http_request or request
     local HttpService = game:GetService('HttpService')
