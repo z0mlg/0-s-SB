@@ -673,9 +673,15 @@ end
 -- every non-exempt player BEFORE modules/autofarm ever start, then bounce back
 -- through the hub into a fresh server. Repeats until we land somewhere empty.
 -- Zero exemptions: every non-local player counts, friends included.
+-- flag is per-account (restartgate_<UserId>): the executor workspace is shared
+-- by every account, so a single file would arm the gate for all of them
+RESTART_GATE_FILE = `Bluu/Swordburst 2/restartgate_{LocalPlayer.UserId}`
+pcall(function() -- legacy shared flag armed every account - remove it
+    if isfile and isfile('Bluu/Swordburst 2/restartgate') then delfile('Bluu/Swordburst 2/restartgate') end
+end)
 local joinGateArmed = (function()
-    if not (isfile and readfile) then return false end
-    local ok, flag = pcall(readfile, 'Bluu/Swordburst 2/restartgate')
+    if not (isfile and readfile) or not isfile(RESTART_GATE_FILE) then return false end
+    local ok, flag = pcall(readfile, RESTART_GATE_FILE)
     return ok and flag == '1'
 end)()
 

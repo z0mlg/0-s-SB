@@ -746,7 +746,7 @@ Autofarm:AddToggle('RestartServer', {
     if writefile and isfolder then
         if not isfolder('Bluu') then makefolder('Bluu') end
         if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
-        writefile('Bluu/Swordburst 2/restartgate', value and '1' or '0')
+        writefile(RESTART_GATE_FILE or `Bluu/Swordburst 2/restartgate_{LocalPlayer.UserId}`, value and '1' or '0')
     end
 end)
 Autofarm:AddSlider('RestartServerDelay', {
