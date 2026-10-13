@@ -752,7 +752,7 @@ end)
 Autofarm:AddSlider('RestartServerDelay', {
     Text = 'Hop after empty',
     Default = 10,
-    Min = 3,
+    Min = 1,
     Max = 60,
     Rounding = 0,
     Suffix = 's',
