@@ -286,7 +286,29 @@ local dodgeScale = function()
     return (Options.DodgeScale and Options.DodgeScale.Value) or 2
 end
 
+-- 'Low' zones are escaped by dropping under them instead of sidestepping -
+-- for the big attacks (lava sections, tempest strikes, wave-boss hits) where
+-- nothing can reach us below. Zones with a big footprint get marked Low
+-- automatically; 'enemy' caster zones are normal mob attacks - sidestep those
+local lowDepth = function()
+    return (Options.DodgeLowDepth and Options.DodgeLowDepth.Value) or 80
+end
+local lowMinSize = function()
+    return (Options.DodgeLowSize and Options.DodgeLowSize.Value) or 45
+end
+
+local zoneFootprint = function(zone)
+    if zone.R then return zone.R end
+    if zone.Size then return math.max(zone.Size.X, zone.Size.Z) * 0.5 end
+    local size = zone.LastSize or (zone.Part and zone.Part:IsA('BasePart') and zone.Part.Size)
+    if size then return math.max(size.X, size.Z) * 0.5 end
+    return 0
+end
+
 local addZone = function(zone)
+    if zone.Low == nil and zone.Kind ~= 'enemy' then
+        zone.Low = zoneFootprint(zone) >= lowMinSize()
+    end
     table.insert(DangerZones.List, zone)
     -- dodge the same instant the attack is detected, not on the next farm tick
     if DangerZones.ApplyNow then
@@ -295,7 +317,7 @@ local addZone = function(zone)
     return zone
 end
 
-local addPointZone = function(pos, radius, duration)
+local addPointZone = function(pos, radius, duration, low)
     return addZone({
         Kind = 'point',
         X = pos.X,
@@ -303,6 +325,7 @@ local addPointZone = function(pos, radius, duration)
         Z = pos.Z,
         R = radius or dodgeDefaultRadius(),
         Expires = tick() + (duration or 4),
+        Low = low,
     })
 end
 
@@ -330,19 +353,21 @@ local addPartZone = function(part, duration)
     return zone
 end
 
-local trackTelegraph = function(inst)
+local trackTelegraph = function(inst, low)
     local life = inst.GetAttribute and inst:GetAttribute('Lifetime')
     local duration = (type(life) == 'number' and life or 4) + 2.5
+    local zone
     if inst:IsA('BasePart') then
-        addPartZone(inst, duration)
+        zone = addPartZone(inst, duration)
     elseif inst:IsA('Model') then
         local ok, cf, size = pcall(function()
             return inst:GetPivot(), inst:GetExtentsSize()
         end)
         if ok and cf and size then
-            addZone({ Kind = 'box', CF = cf, Size = size, Expires = tick() + duration })
+            zone = addZone({ Kind = 'box', CF = cf, Size = size, Expires = tick() + duration })
         end
     end
+    if low and zone then zone.Low = true end
 end
 
 -- circle hit: returns escape point on XZ or nil
@@ -393,44 +418,68 @@ local boxZoneHit = function(cf, size, elliptical, x, z)
     return world.X, world.Z
 end
 
--- returns escapeXZ, or 'dead' when the zone expired and should be dropped
+-- Y we'd have to drop to for this zone to stop hitting us, or nil when the
+-- zone has no usable height (caller falls back to the normal XZ escape)
+local zoneLowY = function(zone)
+    local bottom
+    if zone.Kind == 'point' then
+        bottom = zone.Y - (zone.R or 0) * dodgeScale()
+    elseif zone.Kind == 'box' then
+        bottom = zone.CF.Position.Y - zone.Size.Y * 0.5 * dodgeScale()
+    elseif zone.LastCF and zone.LastSize then
+        bottom = zone.LastCF.Position.Y - zone.LastSize.Y * 0.5 * dodgeScale()
+    end
+    return bottom and bottom - lowDepth() or nil
+end
+
+-- returns escapeXZ, a 'low' escapeY, or 'dead' when the zone expired
 local zoneHit = function(zone, x, z, now)
     if zone.Expires and now > zone.Expires then return 'dead' end
 
     local kind = zone.Kind
+    local ex, ez
     if kind == 'point' then
-        return circleZoneHit(zone, x, z)
+        ex, ez = circleZoneHit(zone, x, z)
     elseif kind == 'box' then
-        return boxZoneHit(zone.CF, zone.Size, zone.Elliptical, x, z)
+        ex, ez = boxZoneHit(zone.CF, zone.Size, zone.Elliptical, x, z)
     elseif kind == 'enemy' then
         if not (zone.Enemy and zone.Enemy.Parent) then return 'dead' end
         local root = zone.Enemy:FindFirstChild('HumanoidRootPart')
         if not root then return 'dead' end
         zone.X, zone.Z = root.Position.X, root.Position.Z
-        return circleZoneHit(zone, x, z)
+        ex, ez = circleZoneHit(zone, x, z)
+    else
+        local part = zone.Part
+        local cf, size, shape
+        if part and part:IsDescendantOf(workspace) then
+            cf, size = part.CFrame, part.Size
+            shape = part:IsA('Part') and part.Shape or nil -- MeshParts (Wave.Plane etc.) have no Shape
+            zone.LastCF, zone.LastSize, zone.LastShape = cf, size, shape
+        elseif zone.LastCF then
+            zone.DeadAt = zone.DeadAt or now
+            if now - zone.DeadAt > 1.25 then return 'dead' end
+            cf, size, shape = zone.LastCF, zone.LastSize, zone.LastShape
+        else
+            return 'dead'
+        end
+        if shape == Enum.PartType.Ball then
+            ex, ez = circleZoneHit({
+                X = cf.Position.X,
+                Z = cf.Position.Z,
+                R = math.max(size.X, size.Y, size.Z) * 0.5,
+            }, x, z)
+        else
+            ex, ez = boxZoneHit(cf, size, shape == Enum.PartType.Cylinder, x, z)
+        end
     end
 
-    local part = zone.Part
-    local cf, size, shape
-    if part and part:IsDescendantOf(workspace) then
-        cf, size = part.CFrame, part.Size
-        shape = part:IsA('Part') and part.Shape or nil -- MeshParts (Wave.Plane etc.) have no Shape
-        zone.LastCF, zone.LastSize, zone.LastShape = cf, size, shape
-    elseif zone.LastCF then
-        zone.DeadAt = zone.DeadAt or now
-        if now - zone.DeadAt > 1.25 then return 'dead' end
-        cf, size, shape = zone.LastCF, zone.LastSize, zone.LastShape
-    else
-        return 'dead'
+    -- big attacks: instead of stepping out sideways, report the height we
+    -- need to drop under the zone; no usable bottom -> normal escape
+    if ex and zone.Low then
+        local ly = zoneLowY(zone)
+        if ly then return nil, nil, ly end
     end
-    if shape == Enum.PartType.Ball then
-        return circleZoneHit({
-            X = cf.Position.X,
-            Z = cf.Position.Z,
-            R = math.max(size.X, size.Y, size.Z) * 0.5,
-        }, x, z)
-    end
-    return boxZoneHit(cf, size, shape == Enum.PartType.Cylinder, x, z)
+    return ex, ez
 end
 
 local resolveDodge = function(pos)
@@ -438,21 +487,31 @@ local resolveDodge = function(pos)
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
+    local lowY
     for _ = 1, 5 do
         local hit = false
         local now = tick()
         for i = #list, 1, -1 do
-            local ok, ex, ez = pcall(zoneHit, list[i], x, z, now)
+            local ok, ex, ez, ly = pcall(zoneHit, list[i], x, z, now)
             -- a zone that errors once gets dropped, not retried every frame --
             -- an unprotected error here would kill the whole autofarm loop
             if not ok or ex == 'dead' then
                 table.remove(list, i)
+            elseif ly then
+                -- already under the zone's reach -> it's cleared; else dive
+                if pos.Y > ly then
+                    lowY = lowY and math.min(lowY, ly) or ly
+                    hit = true
+                end
             elseif ex then
                 x, z = ex, ez
                 hit = true
             end
         end
         if not hit then break end
+    end
+    if lowY then
+        return Vector3.new(x, math.min(pos.Y, lowY), z)
     end
     return Vector3.new(x, pos.Y, z)
 end
@@ -486,6 +545,14 @@ local tagIsDangerous = function(tag)
     return false
 end
 
+-- the generic wave-boss marker suffixes are big attacks -> low dodge
+local tagIsLow = function(tag)
+    for _, suffix in next, BETWEEN_TAG_SUFFIXES do
+        if string.sub(tag, -#suffix) == suffix then return true end
+    end
+    return false
+end
+
 -- ground telegraph markers + moving client hitboxes
 workspace.DescendantAdded:Connect(function(inst)
     if not (inst:IsA('BasePart') or inst:IsA('Model')) then return end
@@ -495,7 +562,7 @@ workspace.DescendantAdded:Connect(function(inst)
         if ok and type(tags) == 'table' then
             for _, tag in next, tags do
                 if tagIsDangerous(tag) then
-                    trackTelegraph(inst)
+                    trackTelegraph(inst, tagIsLow(tag))
                     return
                 end
             end
@@ -521,7 +588,7 @@ task.defer(function()
         if not (ok and type(tags) == 'table') then continue end
         for _, tag in next, tags do
             if tagIsDangerous(tag) then
-                trackTelegraph(inst)
+                trackTelegraph(inst, tagIsLow(tag))
                 break
             end
         end
@@ -533,10 +600,13 @@ local hookSkillTags = function(skillName)
         local tag = skillName .. suffix
         if DangerZones.HookedTags[tag] then continue end
         DangerZones.HookedTags[tag] = true
+        local low = tagIsLow(tag)
         for _, inst in next, CollectionService:GetTagged(tag) do
-            trackTelegraph(inst)
+            trackTelegraph(inst, low)
         end
-        CollectionService:GetInstanceAddedSignal(tag):Connect(trackTelegraph)
+        CollectionService:GetInstanceAddedSignal(tag):Connect(function(inst)
+            trackTelegraph(inst, low)
+        end)
     end
 end
 
@@ -605,8 +675,26 @@ local SkillZoneHandlers = {
             addPointZone(pos, (type(radiusSize) == 'number' and radiusSize or 10) * 3.5, 10)
         end
     end },
+    -- The Between tempest wave: strike VFX lands at a CFrame; big attack -> low
+    TempestStrike = { CreateStrike = function(enemy, cf)
+        local pos = typeof(cf) == 'CFrame' and cf.Position or cf
+        if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
+    end },
 }
 SkillZoneHandlers.ShadowBeam = SkillZoneHandlers.SinisterLaser -- same beam-to-point layout
+
+-- wave-defense skills/bosses whose attacks are the big stuff we drop under
+local BIG_ATTACK_SKILLS = { TempestStrike = true, FireyOrb = true }
+local WAVE_BOSSES = { 'Rubricatus', 'Vaelith', 'Nythrane', 'Aegor' }
+local skillIsBig = function(enemy, skillName)
+    if not IN_BETWEEN then return false end
+    if BIG_ATTACK_SKILLS[skillName] then return true end
+    local name = typeof(enemy) == 'Instance' and enemy.Name or ''
+    for _, boss in next, WAVE_BOSSES do
+        if name:find(boss) then return true end
+    end
+    return false
+end
 
 -- one caster-following zone per enemy; recasts extend it instead of stacking
 local casterZones = setmetatable({}, { __mode = 'k' })
@@ -623,7 +711,7 @@ local addCasterZone = function(enemy, duration)
     casterZones[enemy] = addZone({ Kind = 'enemy', Enemy = enemy, R = dodgeDefaultRadius(), X = 0, Z = 0, Expires = expires })
 end
 
-local genericSkillZones = function(enemy, args)
+local genericSkillZones = function(enemy, args, low)
     local root = enemyRoot(enemy)
     local ePos = root and root.Position
     local duration = 4
@@ -657,7 +745,7 @@ local genericSkillZones = function(enemy, args)
         end
         -- positions hugging the caster are covered by the caster zone below
         if pos and (not ePos or Vector3.new(pos.X - ePos.X, 0, pos.Z - ePos.Z).Magnitude > 16) then
-            addPointZone(pos, nil, duration)
+            addPointZone(pos, nil, duration, low)
             casterAoE = false
         end
     end
@@ -689,7 +777,7 @@ task.spawn(function()
         local handler = SkillZoneHandlers[skillName]
         local fn = handler and handler[phaseKey]
         if fn and pcall(fn, enemy, table.unpack(args)) then return end
-        genericSkillZones(enemy, args)
+        genericSkillZones(enemy, args, skillIsBig(enemy, skillName))
     end)
 end)
 
@@ -713,6 +801,7 @@ task.spawn(function()
             CF = cf,
             Size = size,
             Expires = tick() + (type(duration) == 'number' and duration or 3) + (Options.LavaZoneTime and Options.LavaZoneTime.Value or 8),
+            Low = true,
         })
     end)
 end)
@@ -1006,6 +1095,26 @@ Autofarm:AddSlider('DodgeScale', {
     Max = 5,
     Rounding = 1,
     Suffix = 'x',
+    Compact = true
+})
+Autofarm:AddSlider('DodgeLowSize', {
+    Text = 'Go low above size',
+    Tooltip = 'Danger zones with a footprint at least this big are escaped by dropping under them (lava sections, tempest strikes, wave bosses) instead of sidestepping',
+    Default = 45,
+    Min = 10,
+    Max = 200,
+    Rounding = 0,
+    Suffix = 'm',
+    Compact = true
+})
+Autofarm:AddSlider('DodgeLowDepth', {
+    Text = 'Go low depth',
+    Tooltip = 'How far below a big attack we drop until it expires',
+    Default = 80,
+    Min = 20,
+    Max = 500,
+    Rounding = 0,
+    Suffix = 'm',
     Compact = true
 })
 
