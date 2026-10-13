@@ -165,7 +165,11 @@ local DangerZones = {
     LastSkillAt = 0,
 }
 
-local DANGER_TAG_SUFFIXES = { ' Point', ' Blast', ' Ball', ' Strike', ' Meteor', ' Hitbox', ' Zone', ' Telegraph' }
+local DANGER_TAG_SUFFIXES = {
+    ' Point', ' Blast', ' Ball', ' Strike', ' Meteor', ' Hitbox', ' Zone', ' Telegraph',
+    -- The Between (wave defense) bosses: Aegor / Rubricatus / Vaelith markers
+    ' Rock', ' Slam', ' Spike', ' Attack', ' Rift',
+}
 
 local dodgeEnabled = function()
     return Toggles.DodgeAttacks and Toggles.DodgeAttacks.Value
