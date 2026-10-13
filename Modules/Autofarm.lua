@@ -90,6 +90,27 @@ mobIsImmortal = function(mob)
     return false
 end
 
+-- 'Bob' survive wave: keep a large fixed distance from every Bob - it can't
+-- reach past it, and Bob himself is never a valid target
+local bobDistance = function()
+    if not (IN_BETWEEN and BetweenWaveType == 'Bob') then return end
+    if not (Toggles.BetweenBobFlee and Toggles.BetweenBobFlee.Value) then return end
+    return Options.BetweenBobDistance and Options.BetweenBobDistance.Value or 300
+end
+
+local nearestBobPos = function()
+    if not HumanoidRootPart then return end
+    local bestPos, bestDist
+    for _, mob in next, Mobs:GetChildren() do
+        if not mob.Name:find('Bob') or isDead(mob) then continue end
+        local root = mob:FindFirstChild('HumanoidRootPart')
+        if not root then continue end
+        local d = (root.Position - HumanoidRootPart.Position).Magnitude
+        if not bestDist or d < bestDist then bestPos, bestDist = root.Position, d end
+    end
+    return bestPos
+end
+
 local getAutofarmTarget = function()
     local radius = Options.AutofarmRadius.Value
     radius = (radius == Options.AutofarmRadius.Max) and math.huge or radius
@@ -103,9 +124,11 @@ local getAutofarmTarget = function()
     local waypointPos = waypoint.Position
     local myPos = HumanoidRootPart.Position
     local lightPos, lightRange = inBlackoutLight()
+    local bobDist = bobDistance()
 
     for _, mob in next, Mobs:GetChildren() do
         if isDead(mob) or mobIsImmortal(mob) then continue end
+        if bobDist and mob.Name:find('Bob') then continue end
 
         local mobRoot = mob:FindFirstChild('HumanoidRootPart')
         local mobPos = mobRoot and mobRoot.Position
@@ -776,6 +799,21 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
                 noTargetSince = nil
             end
 
+            -- Bob wave takes top priority: never idle at the waypoint or orb
+            -- if they'd put us in his reach
+            local bobDist = bobDistance()
+            local bobPos = bobDist and nearestBobPos()
+            if bobPos then
+                if (HumanoidRootPart.Position - bobPos).Magnitude < bobDist then
+                    local flat = Vector3.new(HumanoidRootPart.Position.X - bobPos.X, 0, HumanoidRootPart.Position.Z - bobPos.Z)
+                    local dir = flat.Magnitude > 0 and flat.Unit or Vector3.new(0, 0, 1)
+                    local edge = bobPos + dir * bobDist
+                    local safePos = Vector3.new(edge.X, HumanoidRootPart.Position.Y, edge.Z)
+                    HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(safePos)
+                end
+                return
+            end
+
             local lightPos = inBlackoutLight()
             if lightPos then
                 HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(lightPos)
@@ -824,6 +862,17 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             local maxDist = math.max(lightRange - 4, 0)
             if fromLight.Magnitude > maxDist then
                 targetPos = lightPos + fromLight.Unit * maxDist
+            end
+        end
+
+        -- bob wave: never let the stand point come within reach of him
+        local bobDist = bobDistance()
+        local bobPos = bobDist and nearestBobPos()
+        if bobPos then
+            local fromBob = targetPos - bobPos
+            if fromBob.Magnitude < bobDist then
+                local dir = fromBob.Magnitude > 0 and fromBob.Unit or Vector3.new(1, 0, 0)
+                targetPos = bobPos + dir * bobDist
             end
         end
 

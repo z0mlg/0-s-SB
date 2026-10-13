@@ -34,6 +34,16 @@ Between:AddToggle('BetweenGlowFirst', {
     Tooltip = 'Waves that mark objective mobs with a Glow inside their root: only those count - target them over everything else'
 })
 
+Between:AddToggle('BetweenBobFlee', {
+    Text = 'Flee from Bob',
+    Default = true,
+    Tooltip = 'Bob wave: keep this distance from every Bob - out of reach of its attacks'
+})
+Between:AddSlider('BetweenBobDistance', { Text = 'Bob distance', Default = 300, Min = 50, Max = 1000, Rounding = 0, Compact = true })
+
+-- active special-wave type ('Blackout', 'Bob', 'Wisp', ...), set by ReplicateWave
+BetweenWaveType = nil
+
 -- Blackout wave: the orb is the only light source; its LightDuration attribute
 -- is both the remaining "Souls" count and the light radius (PointLight.Range).
 -- The orb instance arrives on ReplicateWave as ('StartReplicatedOrb', orb, max).
@@ -65,6 +75,7 @@ local updateLabel = function()
     local text = `Wave #{attr('Wave', 0)} ({attr('WaveDefenseMode', '?')})  |  Mobs left: {left}`
     text ..= `\nLives: {lives or '?'}  |  Time: {attr('WDRunTime', '-')}  |  Remnants: {attr('CurrencyEarned', 0)}`
     if countdown then text ..= `\nNext wave in: {countdown}` end
+    if BetweenWaveType then text ..= `\nSpecial wave: {BetweenWaveType}` end
     local _, lightRange = BlackoutLight()
     if lightRange then text ..= `\nSoul light: {math.floor(lightRange)} studs` end
     waveLabel:SetText(text)
@@ -80,7 +91,10 @@ task.spawn(function()
     local ReplicateWave = game:GetService('ReplicatedStorage'):WaitForChild('ReplicateWave', 30)
     if not ReplicateWave then return end
     ReplicateWave.OnClientEvent:Connect(function(waveType, event, a)
-        if event == 'StartReplicatedOrb' and typeof(a) == 'Instance' then
+        if event == 'Start' then
+            BetweenWaveType = waveType
+            updateLabel()
+        elseif event == 'StartReplicatedOrb' and typeof(a) == 'Instance' then
             BlackoutOrb = a
             a:GetAttributeChangedSignal('LightDuration'):Connect(updateLabel)
             a.AncestryChanged:Connect(function(_, parent)
@@ -88,6 +102,7 @@ task.spawn(function()
             end)
             updateLabel()
         elseif event == 'Stop' then
+            BetweenWaveType = nil
             BlackoutOrb = nil
             updateLabel()
         end
