@@ -184,6 +184,60 @@ end)
 
 local MiscSkill = {}
 
+-- ===================== SKILL PRIORITY / STAMINA GATE =====================
+-- Lower priority number fires first; the other skill waits until the first
+-- one has been used (is on cooldown). 'Use skills at stamina' holds both
+-- until stamina regens to that %; once the first one fires, a short combo
+-- window lets the second follow even though stamina just dropped.
+local skillComboUntil = 0
+local SKILL_COMBO_WINDOW = 3
+
+local staminaPercent = function()
+    local maxValue = (pcall(function() return Stamina.MaxValue end)) and Stamina.MaxValue or nil
+    if type(maxValue) ~= 'number' or maxValue <= 0 then maxValue = 100 end
+    return Stamina.Value / maxValue * 100
+end
+
+local skillPriority = function(which)
+    local opt = Options[which == 'Main' and 'MainSkillPriority' or 'MiscSkillPriority']
+    return opt and opt.Value or 1
+end
+
+-- misc skills that only fire situationally (heal at low HP, tree at low
+-- stamina) can't be waited on - otherwise Main would stall forever
+local miscIsOrderable = function()
+    return MiscSkill.Name == 'Cursed Enhancement'
+end
+
+skillGate = function(which)
+    local self, other = KillauraSkill, MiscSkill
+    if which == 'Misc' then self, other = MiscSkill, KillauraSkill end
+    local otherName = other.Name and (which == 'Main' and miscIsOrderable() or which == 'Misc')
+
+    -- ordering: the other skill has a lower priority number and hasn't gone yet
+    if otherName and skillPriority(which == 'Main' and 'Misc' or 'Main') < skillPriority(which)
+        and not other.OnCooldown then
+        return false
+    end
+
+    if tick() < skillComboUntil then return true end
+
+    local threshold = Options.SkillStaminaPercent and Options.SkillStaminaPercent.Value or 0
+    if threshold > 0 then
+        if staminaPercent() < threshold then return false end
+        -- enough for both when they're paired, so the second one isn't starved
+        if otherName and not other.OnCooldown and Stamina.Value < self.Cost + other.Cost then
+            return false
+        end
+    end
+    return true
+end
+
+-- called when a gated skill actually fires: opens the window for its partner
+skillFired = function()
+    skillComboUntil = tick() + SKILL_COMBO_WINDOW
+end
+
 local skillDurations = {
     ["Sweeping Strike"] = 1.4,
     ["Downward Smash"] = 1,
@@ -212,6 +266,7 @@ KillauraSkill._use = function()
     end
     local self = KillauraSkill
     Event:FireServer('Skills', { 'UseSkill', self.Name, { Direction = HumanoidRootPart.CFrame.lookVector } })
+    skillFired()
     self.OnCooldown = true
     self.Active = true
     local skillDuration = skillDurations[self.Name] or 0
@@ -235,6 +290,12 @@ KillauraSkill.Use = function()
     if not self.Name then return end
     if self.OnCooldown then return end
     if self.Cost > Stamina.Value then return end
+    if not skillGate('Main') then
+        -- misc only re-checks on Health/Stamina changes; at steady stamina
+        -- nothing fires, so poke it or Main would wait on it forever
+        if MiscSkill._tryUse then task.spawn(pcall, MiscSkill._tryUse) end
+        return
+    end
 
     if not self.Class then
         return self._use()
@@ -557,6 +618,7 @@ MiscSkill.Init = function(name, cost, cooldown)
     end
     self._connections = {}
     self._onKillauraSkill = nil
+    self._tryUse = nil
 end
 
 MiscSkill.Init()
@@ -564,6 +626,7 @@ MiscSkill.Init()
 MiscSkill._use = function()
     local self = MiscSkill
     Event:FireServer('Skills', { 'UseSkill', self.Name, { Direction = HumanoidRootPart.CFrame.lookVector } })
+    skillFired()
     self.OnCooldown = true
     task.delay(self.Cooldown, function()
         self.OnCooldown = false
@@ -609,6 +672,7 @@ Killaura:AddDropdown('MiscSkill', { Text = 'Misc skill', Values = {}, AllowNull 
             if not Toggles.Killaura.Value then return end
             if Stamina.Value < self.Cost then return end
             if self.OnCooldown then return end
+            if not skillGate('Misc') then return end
             self._use()
             awaitEventTimeout(
                 Character:GetAttributeChangedSignal('CursedEnhancement'),
@@ -619,9 +683,26 @@ Killaura:AddDropdown('MiscSkill', { Text = 'Misc skill', Values = {}, AllowNull 
             )
         end
     end
+    self._tryUse = func
     self._connections.health = Health.Changed:Connect(func)
     self._connections.stamina = Stamina.Changed:Connect(func)
 end)
+
+Killaura:AddSlider('MainSkillPriority', {
+    Text = 'Main skill priority',
+    Tooltip = 'Lower fires first. Misc 1 + Main 2 = wait for Misc, then Main',
+    Default = 1, Min = 1, Max = 2, Rounding = 0, Compact = true
+})
+Killaura:AddSlider('MiscSkillPriority', {
+    Text = 'Misc skill priority',
+    Tooltip = 'Only Cursed Enhancement is ordered - Heal / Mending Spirit / Summon Tree stay situational',
+    Default = 2, Min = 1, Max = 2, Rounding = 0, Compact = true
+})
+Killaura:AddSlider('SkillStaminaPercent', {
+    Text = 'Use skills at stamina',
+    Tooltip = 'Wait for stamina to regen to this % before firing the skill pair. 0 = off',
+    Default = 0, Min = 0, Max = 100, Rounding = 0, Suffix = '%', Compact = true
+})
 
 do
     local miscSkillNames = {

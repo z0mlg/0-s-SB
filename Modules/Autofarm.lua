@@ -505,10 +505,26 @@ local SkillZoneHandlers = {
 }
 SkillZoneHandlers.ShadowBeam = SkillZoneHandlers.SinisterLaser -- same beam-to-point layout
 
+-- one caster-following zone per enemy; recasts extend it instead of stacking
+local casterZones = setmetatable({}, { __mode = 'k' })
+local addCasterZone = function(enemy, duration)
+    if not (enemy and enemyRoot(enemy)) then return end
+    if not (Toggles.DodgeCasterAoE == nil or Toggles.DodgeCasterAoE.Value) then return end
+    local expires = tick() + duration
+    local zone = casterZones[enemy]
+    if zone and table.find(DangerZones.List, zone) then
+        zone.Expires = math.max(zone.Expires, expires)
+        zone.R = dodgeDefaultRadius()
+        return
+    end
+    casterZones[enemy] = addZone({ Kind = 'enemy', Enemy = enemy, R = dodgeDefaultRadius(), X = 0, Z = 0, Expires = expires })
+end
+
 local genericSkillZones = function(enemy, args)
     local root = enemyRoot(enemy)
     local ePos = root and root.Position
     local duration = 4
+    local casterAoE = true -- no remote position away from the caster -> it's an AoE on itself
     for _, arg in next, args do
         if type(arg) == 'number' and arg > 0.2 and arg < 45 then
             duration = arg + 1.5
@@ -536,11 +552,17 @@ local genericSkillZones = function(enemy, args)
                 end
             end
         end
-        -- positions hugging the caster are the mob itself; skipping them lets
-        -- autofarm still walk up to it
+        -- positions hugging the caster are covered by the caster zone below
         if pos and (not ePos or Vector3.new(pos.X - ePos.X, 0, pos.Z - ePos.Z).Magnitude > 16) then
             addPointZone(pos, nil, duration)
+            casterAoE = false
         end
+    end
+    -- self-centred casts (stomps, spins, novas) used to produce NO zone, so we
+    -- stood under the mob until the hit landed - zone the caster itself the
+    -- instant the cast remote arrives
+    if casterAoE then
+        addCasterZone(enemy, math.min(duration, Options.CasterDodgeTime and Options.CasterDodgeTime.Value or 2.5))
     end
 end
 
@@ -763,6 +785,20 @@ Autofarm:AddToggle('BlockSkillDamage', {
     Text = 'Block wave/tide damage',
     Default = true,
     Tooltip = 'Drops the client-reported DamageSelf remote used by Touched skills (OmegaWave, Leviathan tides, PanStorm, GuardianBalls...)'
+})
+Autofarm:AddToggle('DodgeCasterAoE', {
+    Text = 'Dodge self-centred casts',
+    Default = true,
+    Tooltip = 'Unknown skills with no target position: back off the casting mob (Unknown attack radius) the instant the cast starts'
+})
+Autofarm:AddSlider('CasterDodgeTime', {
+    Text = 'Caster dodge time',
+    Default = 2.5,
+    Min = 0.5,
+    Max = 6,
+    Rounding = 1,
+    Suffix = 's',
+    Compact = true
 })
 Autofarm:AddSlider('DodgePadding', {
     Text = 'Dodge padding',
