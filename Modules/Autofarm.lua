@@ -615,6 +615,29 @@ task.spawn(function()
     end)
 end)
 
+-- The Between special waves arrive on their own remote: ReplicateWave(waveType,
+-- event, ...). Lava's 'Warning' shakes the floor section that's about to turn
+-- to lava for <duration>s - zone its footprint for the warning + burn window.
+task.spawn(function()
+    local ReplicateWave = game:GetService('ReplicatedStorage'):WaitForChild('ReplicateWave', 30)
+    if not ReplicateWave then return end
+    ReplicateWave.OnClientEvent:Connect(function(waveType, event, model, duration)
+        if waveType ~= 'Lava' or event ~= 'Warning' then return end
+        if typeof(model) ~= 'Instance' then return end
+        local ok, cf, size = pcall(function()
+            if model:IsA('BasePart') then return model.CFrame, model.Size end
+            return model:GetPivot(), model:GetExtentsSize()
+        end)
+        if not (ok and cf and size) then return end
+        addZone({
+            Kind = 'box',
+            CF = cf,
+            Size = size,
+            Expires = tick() + (type(duration) == 'number' and duration or 3) + (Options.LavaZoneTime and Options.LavaZoneTime.Value or 8),
+        })
+    end)
+end)
+
 -- enforce every frame, before physics/touch processing, autofarm on or off --
 -- the farm loop runs after task.wait() and would otherwise lag a frame behind
 DangerZones.ApplyNow = function()
@@ -823,6 +846,16 @@ Autofarm:AddSlider('CasterDodgeTime', {
     Min = 0.5,
     Max = 6,
     Rounding = 1,
+    Suffix = 's',
+    Compact = true
+})
+Autofarm:AddSlider('LavaZoneTime', {
+    Text = 'Lava avoid time',
+    Tooltip = 'The Between lava wave: how long to keep off a section after its warning ends',
+    Default = 8,
+    Min = 0,
+    Max = 30,
+    Rounding = 0,
     Suffix = 's',
     Compact = true
 })
