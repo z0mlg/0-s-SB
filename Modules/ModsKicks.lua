@@ -355,21 +355,31 @@ local panicSweep = function(offender)
     end
 end
 
+local panicHopping = false
+
 local panicWatch = function(player)
     if panicWatching[player] then return end
     panicWatching[player] = true
 
     task.delay(Options.PanicPlayerDelay.Value, function()
         panicWatching[player] = nil
+        if panicHopping then return end
         if not (Toggles.PlayerPanic and Toggles.PlayerPanic.Value) then return end
         if not (Toggles.PanicBlockHop and Toggles.PanicBlockHop.Value) then return end -- stay put, look AFK
-        if not player.Parent then return end -- left on their own
 
+        -- block every non-exempt player still in the server, then hop
+        local offenders = {}
         for _, p in next, Players:GetPlayers() do
             if not isPanicExempt(p) then
-                blockPlayer(p)
-                task.wait(5)
+                table.insert(offenders, p)
             end
+        end
+        if #offenders == 0 then return end -- everyone's gone, nothing to block
+
+        panicHopping = true
+        for _, p in next, offenders do
+            blockPlayer(p)
+            task.wait(5)
         end
 
         -- resume this floor + position after the hub bounce makes a new server
@@ -397,6 +407,7 @@ Players.PlayerRemoving:Connect(function()
         if not isPanicExempt(p) then return end
     end
     panicSwept = false -- server clean again, re-arm the sweep
+    panicHopping = false
 end)
 
 Toggles.PlayerPanic:OnChanged(function(value)
@@ -420,6 +431,7 @@ Toggles.PlayerPanic:OnChanged(function(value)
     end
     panicSwept = false
     panicWatching = {}
+    panicHopping = false
 end)
 
 -- enabling block+hop while already panicked re-arms the watch for anyone
