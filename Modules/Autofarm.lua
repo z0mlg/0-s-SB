@@ -72,6 +72,24 @@ local mobGlows = function(mob)
     return root ~= nil and root:FindFirstChild('Glow') ~= nil
 end
 
+-- nameplate shows 'Immortal' while a mob can't be killed - never target those.
+-- Marker instance is cached per mob; Visible is checked live since it toggles
+local immortalCache = setmetatable({}, { __mode = 'k' })
+mobIsImmortal = function(mob)
+    local c = immortalCache[mob]
+    if c then
+        if c.marker then return c.marker.Parent ~= nil and c.marker.Visible == true end
+        if tick() - c.t < 2 then return false end -- retry while a nameplate may still build
+    end
+    local found = mob:FindFirstChild('Immortal', true)
+    if found and found:IsA('GuiObject') and found:FindFirstAncestorWhichIsA('LayerCollector') then
+        immortalCache[mob] = { marker = found }
+        return found.Visible == true
+    end
+    immortalCache[mob] = { t = tick() }
+    return false
+end
+
 local getAutofarmTarget = function()
     local radius = Options.AutofarmRadius.Value
     radius = (radius == Options.AutofarmRadius.Max) and math.huge or radius
@@ -87,7 +105,7 @@ local getAutofarmTarget = function()
     local lightPos, lightRange = inBlackoutLight()
 
     for _, mob in next, Mobs:GetChildren() do
-        if isDead(mob) then continue end
+        if isDead(mob) or mobIsImmortal(mob) then continue end
 
         local mobRoot = mob:FindFirstChild('HumanoidRootPart')
         local mobPos = mobRoot and mobRoot.Position
@@ -770,8 +788,8 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         sawTarget = true
 
         -- a glowing objective mob stays the target until it dies, regardless
-        -- of tag/ignore state
-        if isDead(target) or (not mobGlows(target)
+        -- of tag/ignore state - unless it goes immortal, then bail
+        if isDead(target) or mobIsImmortal(target) or (not mobGlows(target)
             and (Options.IgnoreMobs.Value[target.Name] or tagGate(target))) then
             shouldUpdateTarget = true
             return
