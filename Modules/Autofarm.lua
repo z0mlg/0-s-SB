@@ -603,6 +603,8 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
     local target
     local shouldUpdateTarget = true
     local noTargetSince
+    local sawTarget = false      -- becomes true once ANY killable target exists this session
+    local farmStart = tick()     -- when this farm loop began (right after join)
 
     local farmTick = function(deltaTime)
         local inputVec = Vector3.new(controls.D - controls.A, 0, controls.S - controls.W)
@@ -626,17 +628,21 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         end
 
         if not target then
-            -- Restart Server: nothing killable for RestartServerDelay seconds ->
-            -- save state and hop through the hub into a fresh server (boss respawns)
+            -- Restart Server: wait for mobs to actually spawn first - the
+            -- empty-timer only counts once we've seen a killable target this
+            -- session, OR the give-up cap hit (truly dead server, bail anyway).
             if Toggles.RestartServer and Toggles.RestartServer.Value then
-                noTargetSince = noTargetSince or tick()
-                if tick() - noTargetSince >= Options.RestartServerDelay.Value then
-                    if saveServerSwitchConfig and HumanoidRootPart then
-                        saveServerSwitchConfig(game.PlaceId, HumanoidRootPart.Position)
+                local giveUpAfter = math.max(60, Options.RestartServerDelay.Value * 10)
+                if sawTarget or tick() - farmStart >= giveUpAfter then
+                    noTargetSince = noTargetSince or tick()
+                    if tick() - noTargetSince >= Options.RestartServerDelay.Value then
+                        if saveServerSwitchConfig and HumanoidRootPart then
+                            saveServerSwitchConfig(game.PlaceId, HumanoidRootPart.Position)
+                        end
+                        pcall(function()
+                            game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+                        end)
                     end
-                    pcall(function()
-                        game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
-                    end)
                 end
             else
                 noTargetSince = nil
@@ -648,6 +654,7 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
             return
         end
         noTargetSince = nil
+        sawTarget = true
 
         if isDead(target) or Options.IgnoreMobs.Value[target.Name] or tagGate(target) then
             shouldUpdateTarget = true
