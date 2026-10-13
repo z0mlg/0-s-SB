@@ -167,7 +167,8 @@ Profile = Profiles:WaitForChild(LocalPlayer.Name)
 
 MySkills = Profile:WaitForChild('Skills')
 Inventory = Profile:WaitForChild('Inventory')
-AnimPacks = Profile:WaitForChild('AnimPacks')
+-- removed from profiles in the October update: optional, never block on it
+AnimPacks = Profile:WaitForChild('AnimPacks', 5)
 Equip = Profile:WaitForChild('Equip')
 
 Exp = Profile:WaitForChild('Stats'):WaitForChild('Exp')

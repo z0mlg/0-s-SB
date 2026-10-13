@@ -4,6 +4,9 @@ local Miscs = Main:AddLeftTabbox()
 
 local Misc1 = Miscs:AddTab('Misc')
 
+-- animation packs: profiles no longer carry AnimPacks after the update, so the
+-- whole section is skipped (and any missing UI path can't kill the module)
+if AnimPacks then pcall(function()
 local AnimPackNames = {}
 for _, AnimPack in next, game:GetService('StarterPlayer').StarterCharacterScripts.Animate.Packs:GetChildren() do
     table.insert(AnimPackNames, AnimPack.Name)
@@ -78,6 +81,7 @@ PlayerUI.MainFrame.TabFrames.Settings.Attachments.AnimPacks.ChildAdded:Connect(f
         })
     end)
 end)
+end) end
 
 chatSize = Chat.Size
 local chatSizeStretched = UDim2.fromScale(Chat.Size.X.Scale, Chat.Size.Y.Scale * 2)
