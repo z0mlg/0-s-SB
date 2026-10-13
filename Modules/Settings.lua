@@ -55,8 +55,9 @@ SaveManager:IgnoreThemeSettings()
 
 -- Per-account autoload: one JSON map (autoloads.json) holds every account's
 -- pick, e.g. {"Swordburst2lover1":"test1","0mlgg":"test2"}. The config pool
--- stays shared; an account with no entry falls back to the shared
--- autoload.txt (then to autoload_<UserId>.txt from the previous system).
+-- stays shared, but autoload NEVER falls back to a shared marker - an account
+-- with no entry loads nothing. (autoload_<UserId>.txt is kept as a backup
+-- marker; a stale shared autoload.txt is deleted once, below.)
 if writefile and readfile then
     local HttpService = game:GetService('HttpService')
     local AUTOLOADS_FILE = 'Bluu/Swordburst 2/autoloads.json'
@@ -79,17 +80,20 @@ if writefile and readfile then
         return name == '' and 'none' or name
     end
 
-    local function legacyAutoloadName()
+    local function settingsBase()
         local base = SaveManager.Folder .. '/settings/'
         if SaveManager:CheckSubFolder(true) then
             base ..= SaveManager.SubFolder .. '/'
         end
-        local name = readMarkerFile(base .. 'autoload_' .. LocalPlayer.UserId .. '.txt')
-        if name ~= 'none' then return name end
-        return readMarkerFile(base .. 'autoload.txt')
+        return base
     end
 
-    -- resolution order: this account's map entry -> uid marker -> shared marker
+    local function legacyAutoloadName()
+        -- per-UserId marker only - never the shared autoload.txt
+        return readMarkerFile(settingsBase() .. 'autoload_' .. LocalPlayer.UserId .. '.txt')
+    end
+
+    -- resolution order: this account's map entry -> this account's uid marker
     local function autoloadName()
         local mine = loadAutoloadMap()[LocalPlayer.Name]
         if type(mine) == 'string' and mine ~= '' then return mine end
@@ -120,6 +124,9 @@ if writefile and readfile then
         if not pcall(saveAutoloadMap, map) then
             return false, 'write file error'
         end
+        -- backup per-account uid marker: if the json map is ever lost this
+        -- account still resolves its own config instead of nothing
+        pcall(writefile, settingsBase() .. 'autoload_' .. LocalPlayer.UserId .. '.txt', name)
         return true, ''
     end
 
@@ -130,15 +137,17 @@ if writefile and readfile then
         if not pcall(saveAutoloadMap, map) then
             return false, 'delete file error'
         end
-        -- also drop a stale uid marker so this account falls back to shared
+        -- drop this account's uid marker too so it really has no autoload
         if delfile then
-            local base = SaveManager.Folder .. '/settings/'
-            if SaveManager:CheckSubFolder(true) then
-                base ..= SaveManager.SubFolder .. '/'
-            end
-            pcall(delfile, base .. 'autoload_' .. LocalPlayer.UserId .. '.txt')
+            pcall(delfile, settingsBase() .. 'autoload_' .. LocalPlayer.UserId .. '.txt')
         end
         return true, ''
+    end
+
+    -- one-time cleanup: the old shared marker poisons every account without a
+    -- map entry - it must never be read again
+    if delfile then
+        pcall(delfile, settingsBase() .. 'autoload.txt')
     end
 
     Menu:AddDivider({ Text = `Autoload is per-account ({LocalPlayer.Name})` })
