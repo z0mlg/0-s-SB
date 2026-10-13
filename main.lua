@@ -87,13 +87,25 @@ rejoinFreshServer = function()
     end
 end
 
--- game-init crashes surface in the console; only fresh-join errors count
+-- did the game's own bootstrap actually fail? (profile + entity present = fine)
+local bootstrapAlive = function()
+    local profiles = game:GetService('ReplicatedStorage'):FindFirstChild('Profiles')
+    local character = LocalPlayer and LocalPlayer.Character
+    return profiles and profiles:FindFirstChild(LocalPlayer.Name) ~= nil
+        and character and character:FindFirstChild('Entity') ~= nil
+end
+
+-- game-init crashes surface in the console; only fresh-join errors count, and
+-- even then only rejoin if bootstrap really is dead - every game script lives
+-- under CardinalClient, so mid-game errors mentioning it are NOT stuck joins
 game:GetService('LogService').MessageOut:Connect(function(message, messageType)
     if tick() - joinStart > 120 then return end
     if messageType ~= Enum.MessageType.MessageError then return end
-    if message:find('Cardinal') or message:find('LoadingScreen') then
-        task.spawn(rejoinFreshServer)
-    end
+    if not (message:find('Cardinal') or message:find('LoadingScreen')) then return end
+    task.spawn(function()
+        task.wait(10) -- give the init chain a moment to finish on its own
+        if not bootstrapAlive() then rejoinFreshServer() end
+    end)
 end)
 
 -- bootstrap watchdog: Profile + Entity must exist within ~75s or we're stuck
