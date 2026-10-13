@@ -65,12 +65,19 @@ local inBlackoutLight = function()
     return BlackoutLight()
 end
 
+-- wave objective mobs carry a 'Glow' object in their root part
+local mobGlows = function(mob)
+    if not (IN_BETWEEN and Toggles.BetweenGlowFirst and Toggles.BetweenGlowFirst.Value) then return false end
+    local root = mob and mob:FindFirstChild('HumanoidRootPart')
+    return root ~= nil and root:FindFirstChild('Glow') ~= nil
+end
+
 local getAutofarmTarget = function()
     local radius = Options.AutofarmRadius.Value
     radius = (radius == Options.AutofarmRadius.Max) and math.huge or radius
 
-    local closestTarget, closestPrioTarget
-    local minDistance, minPrioDistance = radius, radius
+    local closestTarget, closestPrioTarget, closestGlowTarget
+    local minDistance, minPrioDistance, minGlowDistance = radius, radius, math.huge
 
     local ignoreList = Options.IgnoreMobs.Value
     local prioritizeList = Options.PrioritizeMobs.Value
@@ -80,13 +87,27 @@ local getAutofarmTarget = function()
     local lightPos, lightRange = inBlackoutLight()
 
     for _, mob in next, Mobs:GetChildren() do
-        local mobName = mob.Name
-        if ignoreList[mobName] or isDead(mob) then continue end
+        if isDead(mob) then continue end
+
+        local mobRoot = mob:FindFirstChild('HumanoidRootPart')
+        local mobPos = mobRoot and mobRoot.Position
+        if not mobPos then continue end
+
+        -- wave objective: glowing mobs must actually die, so they jump every
+        -- queue - ignore/tag/assist/waypoint rules don't apply to them
+        if mobGlows(mob) then
+            if lightPos and (mobPos - lightPos).Magnitude > lightRange then continue end
+            local dist = (mobPos - myPos).Magnitude
+            if dist < minGlowDistance then
+                minGlowDistance = dist
+                closestGlowTarget = mob
+            end
+            continue
+        end
+
+        if ignoreList[mob.Name] then continue end
         if not assistRequirement(mob) then continue end
         if tagGate(mob) then continue end
-
-        local mobPos = mob:FindFirstChild('HumanoidRootPart') and mob.HumanoidRootPart.Position
-        if not mobPos then continue end
 
         if lightPos then
             if (mobPos - lightPos).Magnitude > lightRange then continue end
@@ -94,7 +115,7 @@ local getAutofarmTarget = function()
 
         local dist = (mobPos - myPos).Magnitude
 
-        if prioritizeList[mobName] then
+        if prioritizeList[mob.Name] then
             if dist < minPrioDistance then
                 minPrioDistance = dist
                 closestPrioTarget = mob
@@ -105,7 +126,7 @@ local getAutofarmTarget = function()
         end
     end
 
-    return closestPrioTarget or closestTarget
+    return closestGlowTarget or closestPrioTarget or closestTarget
 end
 
 local calculateAutofarmOffset = (function()
@@ -748,7 +769,10 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         noTargetSince = nil
         sawTarget = true
 
-        if isDead(target) or Options.IgnoreMobs.Value[target.Name] or tagGate(target) then
+        -- a glowing objective mob stays the target until it dies, regardless
+        -- of tag/ignore state
+        if isDead(target) or (not mobGlows(target)
+            and (Options.IgnoreMobs.Value[target.Name] or tagGate(target))) then
             shouldUpdateTarget = true
             return
         end

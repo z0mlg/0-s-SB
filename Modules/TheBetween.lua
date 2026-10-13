@@ -28,6 +28,12 @@ Between:AddToggle('BetweenBlackoutLight', {
     Tooltip = 'Blackout wave: stay near the light orb and only farm mobs inside its light'
 })
 
+Between:AddToggle('BetweenGlowFirst', {
+    Text = 'Kill glowing mobs first',
+    Default = true,
+    Tooltip = 'Waves that mark objective mobs with a Glow inside their root: only those count - target them over everything else'
+})
+
 -- Blackout wave: the orb is the only light source; its LightDuration attribute
 -- is both the remaining "Souls" count and the light radius (PointLight.Range).
 -- The orb instance arrives on ReplicateWave as ('StartReplicatedOrb', orb, max).
