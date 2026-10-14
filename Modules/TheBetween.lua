@@ -34,6 +34,12 @@ Between:AddToggle('BetweenGlowFirst', {
     Tooltip = 'Waves that mark objective mobs with a Glow inside their root: only those count - target them over everything else'
 })
 
+Between:AddToggle('BetweenRiftFocus', {
+    Text = 'Focus rifts',
+    Default = true,
+    Tooltip = 'Rift wave: target rift mobs before anything else - they are the wave objective'
+})
+
 Between:AddToggle('BetweenBobFlee', {
     Text = 'Flee from Bob',
     Default = true,

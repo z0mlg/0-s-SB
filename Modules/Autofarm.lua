@@ -72,11 +72,26 @@ local mobGlows = function(mob)
     return root ~= nil and root:FindFirstChild('Glow') ~= nil
 end
 
--- every nameplate carries an 'Immortal' ImageLabel under SurfaceGui.Layout -
--- a mob is only unkillable while that label is Visible. The label instance is
--- cached per mob and Visible is read live since it toggles mid-fight
+-- Rift wave: rifts are the objective - focus them over regular mobs
+local inRiftWave = function()
+    return IN_BETWEEN and BetweenWaveType == 'Rift'
+        and Toggles.BetweenRiftFocus ~= nil and Toggles.BetweenRiftFocus.Value
+end
+local mobIsRift = function(mob)
+    return mob.Name:find('Rift') ~= nil
+end
+
+-- unkillable mobs carry an 'Immortal' child under their Entity - the game's
+-- own DamageArea skips those the same way. The nameplate mirrors it with an
+-- 'Immortal' ImageLabel (SurfaceGui.Layout.Immortal) that's only Visible while
+-- immortal; a raw recursive find can hit a non-nameplate 'Immortal' first and
+-- shadow the label, so the label search is scoped to GUI descendants only.
+-- The label instance is cached per mob and Visible is read live.
 local immortalCache = setmetatable({}, { __mode = 'k' })
 mobIsImmortal = function(mob)
+    local entity = mob:FindFirstChild('Entity')
+    if entity and entity:FindFirstChild('Immortal') then return true end
+
     local c = immortalCache[mob]
     if c then
         if c.marker then
@@ -84,10 +99,12 @@ mobIsImmortal = function(mob)
         end
         if tick() - c.t < 2 then return false end -- retry while a nameplate may still build
     end
-    local found = mob:FindFirstChild('Immortal', true)
-    if found and found:IsA('GuiObject') and found:FindFirstAncestorWhichIsA('LayerCollector') then
-        immortalCache[mob] = { marker = found }
-        return found.Visible == true
+    for _, d in next, mob:GetDescendants() do
+        if d.Name == 'Immortal' and d:IsA('GuiObject')
+            and d:FindFirstAncestorWhichIsA('LayerCollector') then
+            immortalCache[mob] = { marker = d }
+            return d.Visible == true
+        end
     end
     immortalCache[mob] = { t = tick() }
     return false
@@ -118,8 +135,8 @@ local getAutofarmTarget = function()
     local radius = Options.AutofarmRadius.Value
     radius = (radius == Options.AutofarmRadius.Max) and math.huge or radius
 
-    local closestTarget, closestPrioTarget, closestGlowTarget
-    local minDistance, minPrioDistance, minGlowDistance = radius, radius, math.huge
+    local closestTarget, closestPrioTarget, closestGlowTarget, closestRiftTarget
+    local minDistance, minPrioDistance, minGlowDistance, minRiftDistance = radius, radius, math.huge, math.huge
 
     local ignoreList = Options.IgnoreMobs.Value
     local prioritizeList = Options.PrioritizeMobs.Value
@@ -149,6 +166,19 @@ local getAutofarmTarget = function()
             continue
         end
 
+        -- rift wave: rifts are the wave objective, chase them over everything
+        -- (also ignoring the usual filters); regular mobs only fill in when
+        -- no rift is alive
+        if inRiftWave() and mobIsRift(mob) then
+            if lightPos and (mobPos - lightPos).Magnitude > lightRange then continue end
+            local dist = (mobPos - myPos).Magnitude
+            if dist < minRiftDistance then
+                minRiftDistance = dist
+                closestRiftTarget = mob
+            end
+            continue
+        end
+
         if ignoreList[mob.Name] then continue end
         if not assistRequirement(mob) then continue end
         if tagGate(mob) then continue end
@@ -170,7 +200,7 @@ local getAutofarmTarget = function()
         end
     end
 
-    return closestGlowTarget or closestPrioTarget or closestTarget
+    return closestGlowTarget or closestRiftTarget or closestPrioTarget or closestTarget
 end
 
 local calculateAutofarmOffset = (function()
@@ -981,9 +1011,10 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         noTargetSince = nil
         sawTarget = true
 
-        -- a glowing objective mob stays the target until it dies, regardless
-        -- of tag/ignore state - unless it goes immortal, then bail
-        if isDead(target) or mobIsImmortal(target) or (not mobGlows(target)
+        -- objective mobs (glowing / rift on its wave) stay the target until
+        -- they die, regardless of tag/ignore state - unless it goes immortal
+        local objective = mobGlows(target) or (inRiftWave() and mobIsRift(target))
+        if isDead(target) or mobIsImmortal(target) or (not objective
             and (Options.IgnoreMobs.Value[target.Name] or tagGate(target))) then
             shouldUpdateTarget = true
             return

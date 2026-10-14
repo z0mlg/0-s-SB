@@ -416,7 +416,8 @@ Killaura:AddToggle('Killaura', { Text = 'Enabled' }):OnChanged(function()
             if isDead(target) or mobIsImmortal(target) then continue end
             if not assistRequirement(target) then continue end
             if tagGate(target) then continue end
-            local rootPart = target.HumanoidRootPart
+            local rootPart = target:FindFirstChild('HumanoidRootPart')
+            if not rootPart then continue end
             local targetPos = rootPart.Position + Vector3.new(
                 0,
                 (HumanoidRootPart.Size.Y - rootPart.Size.Y) * 0.5,
@@ -432,8 +433,9 @@ Killaura:AddToggle('Killaura', { Text = 'Enabled' }):OnChanged(function()
             if (targetPos - HumanoidRootPart.Position).Magnitude > range then
                 continue
             end
-            attack(target)
-            attacked += 1
+            -- one malformed mob must never kill the whole attack loop
+            local ok, err = pcall(attack, target)
+            if ok then attacked += 1 end
         end
 
         if Toggles.AttackPlayers.Value then
