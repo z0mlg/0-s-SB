@@ -635,6 +635,7 @@ end
 
 -- ground telegraph markers + moving client hitboxes
 workspace.DescendantAdded:Connect(function(inst)
+    if getgenv().Bluu == false then return end
     if not (inst:IsA('BasePart') or inst:IsA('Model')) then return end
     task.defer(function()
         if not inst:IsDescendantOf(workspace) then return end
@@ -699,11 +700,37 @@ end
 -- known skill signatures from the decompiled EnemySkills modules; anything not
 -- listed falls through to genericSkillZones which zones every position arg.
 local SkillZoneHandlers = {
-    LavaSmash = { Initial = function(enemy, pos, lifetime) -- Atheon slam point
-        if typeof(pos) == 'Vector3' then
-            addPointZone(pos, nil, (type(lifetime) == 'number' and lifetime or 2) + 2)
-        end
-    end },
+    -- Atheon aerial slam: Replicating(surfacePos, lifetime, jumpHeight, lastCFrame)
+    -- fires while he's still standing on the landing point, so the generic path
+    -- drops both positions as 'near caster' and leaves a caster zone that dies
+    -- mid-jump. Zone the impact point AND the boss for the whole air window:
+    -- jump tween is lifetime*0.25 up, then he falls back onto lastCFrame.
+    LavaSmash = {
+        Replicating = function(enemy, pos, lifetime, _, landCF)
+            local dur = (type(lifetime) == 'number' and lifetime or 3) + 4
+            if typeof(pos) == 'Vector3' then
+                addPointZone(pos, nil, dur)
+            end
+            local land = typeof(landCF) == 'CFrame' and landCF.Position or nil
+            if land and not (typeof(pos) == 'Vector3'
+                and Vector3.new(pos.X - land.X, 0, pos.Z - land.Z).Magnitude < 8) then
+                addPointZone(land, nil, dur)
+            end
+            if enemy then
+                addZone({ Kind = 'enemy', Enemy = enemy, R = dodgeDefaultRadius(), X = 0, Z = 0, Expires = tick() + dur })
+            end
+        end,
+        Initial = function(enemy, pos, lifetime)
+            if typeof(pos) == 'Vector3' then
+                addPointZone(pos, nil, (type(lifetime) == 'number' and lifetime or 2) + 2)
+            end
+        end,
+        CreateImpact = function(enemy)
+            if enemy then -- residual hitbox the moment he lands
+                addZone({ Kind = 'enemy', Enemy = enemy, R = dodgeDefaultRadius(), X = 0, Z = 0, Expires = tick() + 2 })
+            end
+        end,
+    },
     FireDash = { Initial = function(enemy, fromPos, toPos, endCFrame, speed, width)
         if typeof(fromPos) ~= 'Vector3' then return end
         local target = typeof(endCFrame) == 'CFrame' and endCFrame.Position or toPos
@@ -858,6 +885,7 @@ task.spawn(function()
     if not ReplicateSkill then return end
 
     ReplicateSkill.OnClientEvent:Connect(function(enemy, phase, skillName, ...)
+        if getgenv().Bluu == false then return end
         if bossSkillIgnored(enemy, skillName) then return end
         if not dodgeSkillAllowed(enemy, skillName) then return end
         DangerZones.LastSkillAt = tick()
@@ -886,6 +914,7 @@ task.spawn(function()
     local ReplicateWave = game:GetService('ReplicatedStorage'):WaitForChild('ReplicateWave', 30)
     if not ReplicateWave then return end
     ReplicateWave.OnClientEvent:Connect(function(waveType, event, model, duration)
+        if getgenv().Bluu == false then return end
         if waveType ~= 'Lava' or event ~= 'Warning' then return end
         if typeof(model) ~= 'Instance' then return end
         local ok, cf, size = pcall(function()
@@ -914,12 +943,20 @@ DangerZones.ApplyNow = function()
         HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolved
     end
 end
-RunService.PreSimulation:Connect(function() pcall(DangerZones.ApplyNow) end)
-RenderStepped:Connect(function() pcall(DangerZones.ApplyNow) end)
+local applyConns = {
+    RunService.PreSimulation:Connect(function()
+        if getgenv().Bluu == false then return end
+        pcall(DangerZones.ApplyNow)
+    end),
+    RenderStepped:Connect(function()
+        if getgenv().Bluu == false then return end
+        pcall(DangerZones.ApplyNow)
+    end),
+}
 
 -- purge dead zones so the list can't grow forever when dodging is idle
 task.spawn(function()
-    while true do
+    while getgenv().Bluu ~= false do
         task.wait(5)
         local now = tick()
         for i = #DangerZones.List, 1, -1 do
@@ -1277,6 +1314,20 @@ Autofarm:AddToggle('ShowDangerZones', { Text = 'Show danger zones' }):OnChanged(
     end
     table.clear(zoneVisuals)
 end)
+
+if BluuCleanups then
+    table.insert(BluuCleanups, function()
+        for _, c in next, applyConns do
+            pcall(function() c:Disconnect() end)
+        end
+        for _, vis in next, zoneVisuals do
+            pcall(function() vis:Destroy() end)
+        end
+        table.clear(zoneVisuals)
+        table.clear(DangerZones.List)
+        BetweenNukeCover = nil
+    end)
+end
 
 radiusDisc = nil
 Autofarm:AddToggle('ShowRadius', { Text = 'Show radius' }):OnChanged(function(value)

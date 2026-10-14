@@ -6,6 +6,19 @@ SCRIPT_BASE = 'https://raw.githubusercontent.com/z0mlg/Sb2Cheats/refs/heads/main
 DEV_LOCAL = false
 DEV_PATH = 'E:/Roblox GUI/VapeV4/Sb2Cheats/'
 
+-- Runs spawned by our own queue_on_teleport carry this flag. 'Auto execute' off
+-- (also written by Unload) makes queued copies die here instead of re-running
+-- on every floor join; manual executes always run.
+local AUTOEXEC_FILE = 'Bluu/Swordburst 2/autoexec'
+local autoexecOff = false
+pcall(function()
+    autoexecOff = isfile and isfile(AUTOEXEC_FILE) and readfile(AUTOEXEC_FILE) == 'false'
+end)
+if getgenv().BluuQueued then
+    getgenv().BluuQueued = nil
+    if autoexecOff then return end
+end
+
 if getgenv().Bluu then
     -- Flag left over from a dead/crashed run (GUI is gone): clear it and continue
     if game:GetService('CoreGui'):FindFirstChild('Obsidian') then
@@ -15,6 +28,7 @@ if getgenv().Bluu then
     warn('[Bluu] Stale flag from a previous run, re-executing')
 end
 getgenv().Bluu = true
+BluuCleanups = {} -- modules register unload cleanup fns; Settings > Unload runs them
 
 if not game:IsLoaded() then
     game.Loaded:Wait()
@@ -42,8 +56,8 @@ local OML_SCRIPT_URL = SCRIPT_BASE .. 'main.lua'
 -- Re-queue OML after every teleport. Set BEFORE the hub check so even when we bounce through
 -- the hub, OML re-runs once we land back on the floor.
 local queue_on_teleport = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
-if queue_on_teleport and OML_SCRIPT_URL ~= '' then
-    queue_on_teleport(`loadstring(game:HttpGet('{OML_SCRIPT_URL}'))()`)
+if queue_on_teleport and OML_SCRIPT_URL ~= '' and not autoexecOff then
+    queue_on_teleport(`getgenv().BluuQueued = true; loadstring(game:HttpGet('{OML_SCRIPT_URL}'))()`)
 end
 
 if game.PlaceId == OML_RELOAD_PLACE then -- Main menu: log in to bounce back to our floor

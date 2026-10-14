@@ -18,29 +18,36 @@ Menu:AddToggle('Autoexecute', { Text = 'Auto execute', Default = autoexecute }):
 end)
 
 Menu:AddButton("Unload script", function()
+    getgenv().Bluu = false -- first: every per-frame loop self-disconnects on its next tick
+
     for _, toggle in next, Toggles do
-        if toggle.Value then
-            toggle:SetValue(false)
-        end
+        pcall(function()
+            if toggle.Value then toggle:SetValue(false) end
+        end)
     end
 
-    pcall(function()
-        linearVelocity.Parent = nil
-        waypoint:Destroy()
-        if radiusDisc then radiusDisc:Destroy() end
-        local espFolder = game:GetService('CoreGui'):FindFirstChild('BluuEsp')
-        if espFolder then espFolder:Destroy() end
-        local espGuiOld = game:GetService('CoreGui'):FindFirstChild('BluuEspGui')
-        if espGuiOld then espGuiOld:Destroy() end
-        Humanoid.WalkSpeed = 20
-        Camera.CameraSubject = Character
-        LocalPlayer.CameraMaxZoomDistance = defaultCameraMaxZoomDistance
-        LocalPlayer.DevCameraOcclusionMode = 0
-        Chat.Size = chatSize
-        Library:Unload()
-    end)
+    -- stay unloaded across floor rejoins: queued autoexec copies see 'false' and die
+    pcall(writefile, 'Bluu/Swordburst 2/autoexec', 'false')
 
-    getgenv().Bluu = false
+    -- module cleanups (ESP drawings/connections, etc.) - each guarded so one bad
+    -- step can't abort the rest
+    for _, fn in next, BluuCleanups or {} do pcall(fn) end
+
+    pcall(function() if linearVelocity then linearVelocity.Parent = nil end end)
+    pcall(function() if waypoint then waypoint:Destroy() end end)
+    pcall(function() if radiusDisc then radiusDisc:Destroy() end end)
+    pcall(function()
+        local f = game:GetService('CoreGui'):FindFirstChild('BluuEsp')
+        if f then f:Destroy() end
+        local g = game:GetService('CoreGui'):FindFirstChild('BluuEspGui')
+        if g then g:Destroy() end
+    end)
+    pcall(function() if Humanoid then Humanoid.WalkSpeed = 20 end end)
+    pcall(function() if Camera and Character then Camera.CameraSubject = Character end end)
+    pcall(function() LocalPlayer.CameraMaxZoomDistance = defaultCameraMaxZoomDistance end)
+    pcall(function() LocalPlayer.DevCameraOcclusionMode = 0 end)
+    pcall(function() if Chat then Chat.Size = chatSize end end)
+    pcall(function() Library:Unload() end)
 end)
 
 ThemeManager = loadstring(game:HttpGet(UIRepo .. 'addons/ThemeManager.lua'))()

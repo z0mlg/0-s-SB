@@ -931,7 +931,18 @@ do
         }
     end
 
-    RenderStepped:Connect(function(dt)
+    local espConn
+    espConn = RenderStepped:Connect(function(dt)
+        if getgenv().Bluu == false or Library.Unloaded then
+            for key in pairs(kits) do
+                destroyKit(key)
+            end
+            if espConn then
+                espConn:Disconnect()
+                espConn = nil
+            end
+            return
+        end
         frameDt = dt or 0.016
         if not Toggles.PlayerEsp.Value and not Toggles.MobEsp.Value then
             for key in pairs(kits) do
@@ -968,4 +979,18 @@ do
             end
         end
     end)
+
+    if BluuCleanups then
+        table.insert(BluuCleanups, function()
+            if espConn then
+                pcall(function() espConn:Disconnect() end)
+                espConn = nil
+            end
+            for key in pairs(kits) do
+                pcall(destroyKit, key)
+            end
+            pcall(function() if espFolder then espFolder:Destroy() end end)
+            pcall(function() if espGui then espGui:Destroy() end end)
+        end)
+    end
 end
