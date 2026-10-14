@@ -725,12 +725,17 @@ local joinGateBlockAndHop = function()
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
+    -- block at most 2 of them, in the background - we're here for a fast hop,
+    -- not a clean blocklist; teleport leaves before verification anyway
+    local blocked = 0
     for _, p in next, Players:GetPlayers() do
+        if blocked >= 2 then break end
         if not isGateExempt(p) then
-            blockPlayer(p)
-            task.wait(5)
+            task.spawn(blockPlayer, p)
+            blocked += 1
         end
     end
+    task.wait(0.5) -- let the block prompts actually fire before we leave
     pcall(function()
         if writefile and isfolder and HumanoidRootPart then
             if not isfolder('Bluu') then makefolder('Bluu') end
