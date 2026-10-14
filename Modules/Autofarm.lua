@@ -72,19 +72,21 @@ local mobGlows = function(mob)
     return root ~= nil and root:FindFirstChild('Glow') ~= nil
 end
 
--- nameplate shows 'Immortal' while a mob can't be killed - never target those.
--- Marker instance is cached per mob; Visible is checked live since it toggles
+-- a mob is unkillable while its nameplate contains an 'Immortal' element
+-- (e.g. <part>.SurfaceGui.Layout.Immortal) - the element only exists on
+-- immortal mobs, so presence alone means ignore it, whatever Visible says.
+-- Marker instance is cached per mob; gone from the nameplate = killable again
 local immortalCache = setmetatable({}, { __mode = 'k' })
 mobIsImmortal = function(mob)
     local c = immortalCache[mob]
     if c then
-        if c.marker then return c.marker.Parent ~= nil and c.marker.Visible == true end
+        if c.marker then return c.marker.Parent ~= nil end
         if tick() - c.t < 2 then return false end -- retry while a nameplate may still build
     end
     local found = mob:FindFirstChild('Immortal', true)
-    if found and found:IsA('GuiObject') and found:FindFirstAncestorWhichIsA('LayerCollector') then
+    if found and found:FindFirstAncestorWhichIsA('LayerCollector') then
         immortalCache[mob] = { marker = found }
-        return found.Visible == true
+        return true
     end
     immortalCache[mob] = { t = tick() }
     return false
