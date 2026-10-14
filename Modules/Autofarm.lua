@@ -535,7 +535,18 @@ bossSkillIgnored = function(enemy, skillName)
     return false
 end
 
+-- The Between: we farm from under the arena, so floor mobs, wave bosses and
+-- random hazards (meteors, wisp stuff) can't reach us anyway - zoning them
+-- just yanks us around for nothing. The only skills worth zones are the ones
+-- that can still hit down there; lava floors come via ReplicateWave, Bob and
+-- the soul light are positioning, not zones
+local BETWEEN_DODGE_SKILLS = { TempestStrike = true, FireyOrb = true }
+local dodgeSkillAllowed = function(enemy, skillName)
+    return not IN_BETWEEN or BETWEEN_DODGE_SKILLS[skillName] == true
+end
+
 local tagIsDangerous = function(tag)
+    if IN_BETWEEN then return false end -- underground: no telegraph zones there
     for _, prefix in next, IGNORED_SKILL_TAGS do
         if string.sub(tag, 1, #prefix) == prefix then return false end
     end
@@ -567,6 +578,7 @@ workspace.DescendantAdded:Connect(function(inst)
                 end
             end
         end
+        if IN_BETWEEN then return end -- no moving-hitbox tracking underground
         if not inst:IsA('BasePart') then return end
         if tick() - DangerZones.LastSkillAt > 4 then return end
         if inst:IsDescendantOf(Mobs) then return end
@@ -582,6 +594,7 @@ end)
 
 -- catch markers that already existed when we loaded
 task.defer(function()
+    if IN_BETWEEN then return end
     for _, inst in next, workspace:GetDescendants() do
         if not (inst:IsA('BasePart') or inst:IsA('Model')) then continue end
         local ok, tags = pcall(inst.GetTags, inst)
@@ -763,6 +776,7 @@ task.spawn(function()
 
     ReplicateSkill.OnClientEvent:Connect(function(enemy, phase, skillName, ...)
         if bossSkillIgnored(enemy, skillName) then return end
+        if not dodgeSkillAllowed(enemy, skillName) then return end
         DangerZones.LastSkillAt = tick()
         if type(skillName) ~= 'string' then return end
         hookSkillTags(skillName)
