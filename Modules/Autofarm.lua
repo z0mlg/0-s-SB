@@ -484,8 +484,44 @@ local zoneHit = function(zone, x, z, now)
     return ex, ez
 end
 
+-- Rubricatus' nuke kills anything with line-of-sight to its surface point;
+-- the only defense is standing behind a pillar. While a cover spot is armed
+-- every position resolve snaps to it until the blast window passes.
+BetweenNukeCover = nil -- { Pos = Vector3, Expires = tick }
+local nukeCoverPoint = function()
+    local c = BetweenNukeCover
+    if c and tick() < c.Expires then return c.Pos end
+end
+
+-- ring-scan from the nuke outward: a spot is cover when the ray from the nuke
+-- to it gets blocked by geometry (pillar) before arriving - stand just past
+-- whatever blocked it
+local findNukeCover = function(nukePos)
+    if not HumanoidRootPart then return end
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { Character, Mobs }
+    local origin = nukePos + Vector3.new(0, 4, 0)
+    for radius = 20, 260, 20 do
+        local best, bestDist
+        for i = 0, 23 do
+            local ang = i * math.pi * 2 / 24
+            local dir = Vector3.new(math.cos(ang) * radius, 0, math.sin(ang) * radius)
+            local hit = workspace:Raycast(origin, dir, params)
+            if hit then
+                local stand = hit.Position + dir.Unit * 3
+                local d = (stand - HumanoidRootPart.Position).Magnitude
+                if not bestDist or d < bestDist then best, bestDist = stand, d end
+            end
+        end
+        if best then return best end -- closest blocked ring wins
+    end
+end
+
 local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
+    local cover = nukeCoverPoint()
+    if cover then return cover end
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
@@ -539,10 +575,10 @@ end
 
 -- The Between: we farm from under the arena, so floor mobs, wave bosses and
 -- random hazards (meteors, wisp stuff) can't reach us anyway - zoning them
--- just yanks us around for nothing. The only skills worth zones are the ones
--- that can still hit down there; lava floors come via ReplicateWave, Bob and
--- the soul light are positioning, not zones
-local BETWEEN_DODGE_SKILLS = { TempestStrike = true, FireyOrb = true }
+-- just yanks us around for nothing. The only skills worth reacting to are the
+-- ones that can still hit down there; lava floors come via ReplicateWave, Bob
+-- and the soul light are positioning, not zones
+local BETWEEN_DODGE_SKILLS = { TempestStrike = true, FireyOrb = true, RubricatusNuke = true }
 local dodgeSkillAllowed = function(enemy, skillName)
     return not IN_BETWEEN or BETWEEN_DODGE_SKILLS[skillName] == true
 end
@@ -695,6 +731,20 @@ local SkillZoneHandlers = {
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
+    -- Rubricatus nuke: Replicating delivers the surface position the nuke lands
+    -- on - take cover behind a pillar for the blast window instead of zoning
+    RubricatusNuke = {
+        Replicating = function(enemy, pos)
+            if typeof(pos) ~= 'Vector3' then return end
+            local cover = findNukeCover(pos)
+                or pos - Vector3.new(0, 250, 0) -- no pillar found: dive deep
+            BetweenNukeCover = { Pos = cover, Expires = tick() + 12 }
+        end,
+        Trigger = function(enemy)
+            local c = BetweenNukeCover
+            if c then c.Expires = math.max(c.Expires, tick() + 4) end
+        end,
+    },
 }
 SkillZoneHandlers.ShadowBeam = SkillZoneHandlers.SinisterLaser -- same beam-to-point layout
 
