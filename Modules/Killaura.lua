@@ -260,12 +260,35 @@ local skillDurations = {
     ["Spearitual Strike"] = 1,
 }
 
+-- the game sends a different 3rd arg per skill (decompiled Skills service) -
+-- most skills send NOTHING; spamming a Direction table gets the cast rejected
+local SKILL_USE_ARGS = {
+    ['Mending Spirit'] = 'Direction',
+    ['Solstice Echoes'] = 'Direction',
+    ['Meteor Shot'] = 'Direction',
+    ['Summon Pistol'] = 'Direction',
+    ['Summon Tree'] = 'Direction',
+    ['Sweeping Strike'] = 'Direction',
+    ['Leaping Slash'] = 'Direction',
+    ['Cursed Three Fold Slash'] = 'TimeStarted',
+}
+local fireUseSkill = function(name)
+    local payload = { 'UseSkill', name }
+    local kind = SKILL_USE_ARGS[name]
+    if kind == 'Direction' then
+        payload[3] = { Direction = HumanoidRootPart.CFrame.LookVector }
+    elseif kind == 'TimeStarted' then
+        payload[3] = { TimeStarted = workspace:GetServerTimeNow() }
+    end
+    Event:FireServer('Skills', payload)
+end
+
 KillauraSkill._use = function()
     if MiscSkill._onKillauraSkill then
         MiscSkill._onKillauraSkill()
     end
     local self = KillauraSkill
-    Event:FireServer('Skills', { 'UseSkill', self.Name, { Direction = HumanoidRootPart.CFrame.lookVector } })
+    fireUseSkill(self.Name)
     skillFired()
     self.OnCooldown = true
     self.Active = true
@@ -352,7 +375,7 @@ dealDamage = (function()
         return RequiredServices.Combat.DealDamage
     end
 
-    local RPCKey = Function:InvokeServer('RPCKey', {})
+    local RPCKey = Function:InvokeServer('RPCKey', 'Combat') -- channel name, like the game
     return function(target, attackName)
         Event:FireServer('Combat', RPCKey, { 'Attack', target, attackName, '2' })
     end
@@ -627,7 +650,7 @@ MiscSkill.Init()
 
 MiscSkill._use = function()
     local self = MiscSkill
-    Event:FireServer('Skills', { 'UseSkill', self.Name, { Direction = HumanoidRootPart.CFrame.lookVector } })
+    fireUseSkill(self.Name)
     skillFired()
     self.OnCooldown = true
     task.delay(self.Cooldown, function()
