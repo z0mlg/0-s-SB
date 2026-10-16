@@ -560,13 +560,15 @@ end
 -- sight from the blast point, so the safe spot is the FAR SIDE of a pillar
 -- along the nuke->pillar axis (its shadow). Take the closest pillar to us and
 -- hold the point just past its far face until the window ends.
+-- Descendant scan: live pillars may be nested in folders, and names may carry
+-- suffixes ('Pillar1' etc.) - match any Model containing 'Pillar'.
 local findNukeCover = function(nukePos)
     if not (HumanoidRootPart and nukePos) then return end
     local bestInst, bestDist
-    for _, inst in next, workspace:GetChildren() do
+    for _, inst in next, workspace:GetDescendants() do
         -- boss-spawned cover pillars are Models; the map's static 'Pillar'
         -- MeshParts are decoration and don't block the nuke - skip those
-        if inst.Name == 'Pillar' and inst:IsA('Model') then
+        if inst:IsA('Model') and inst.Name:find('Pillar', 1, true) then
             local ok, cf = pcall(inst.GetPivot, inst)
             if ok and cf then
                 local d = (cf.Position - HumanoidRootPart.Position).Magnitude
@@ -857,45 +859,41 @@ local SkillZoneHandlers = {
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
-    -- Rubricatus nuke: the arena spawns 'Pillar' models for it - teleport
-    -- inside the nearest one until the blast window ends, then farm resumes.
-    -- The server drives the hide timer itself through the 'WaveCountdown'
-    -- workspace attribute (the game's on-screen countdown): while it's set we
-    -- extend cover, the moment it clears the nuke has gone off. Pillar despawn
-    -- and the 12s cap stay as fallbacks if the countdown never appears.
+    -- Rubricatus nuke: LOS kill from the blast point - we must be in a
+    -- pillar's shadow for the whole window no matter what, so the cover
+    -- point overrides every other positioning for its duration.
+    -- One watcher owns the whole lifecycle: arms immediately (deep-dive
+    -- fallback), keeps hunting pillars the entire window (they can lag the
+    -- cast well past the first seconds), tracks the server's own
+    -- 'WaveCountdown' hide timer, and releases the moment it clears.
     RubricatusNuke = {
         Replicating = function(enemy, pos)
             if typeof(pos) ~= 'Vector3' then return end
+            local p, inst = findNukeCover(pos)
+            BetweenNukeCover = {
+                Pos = p or (pos - Vector3.new(0, 250, 0)),
+                Pillar = inst,
+                Expires = tick() + 12,
+            }
             task.spawn(function()
                 local sawCountdown
                 for _ = 1, 100 do -- ~20s cap
+                    local c = BetweenNukeCover
+                    if not c then return end
                     if workspace:GetAttribute('WaveCountdown') ~= nil then
                         sawCountdown = true
-                        local c = BetweenNukeCover
-                        if c then c.Expires = math.max(c.Expires, tick() + 1) end
+                        c.Expires = math.max(c.Expires, tick() + 1)
                     elseif sawCountdown then
                         BetweenNukeCover = nil -- countdown cleared = detonated
                         return
                     end
-                    task.wait(0.2)
-                end
-            end)
-            local cover, pillar = findNukeCover(pos)
-            if cover then
-                BetweenNukeCover = { Pos = cover, Pillar = pillar, Expires = tick() + 12 }
-                return
-            end
-            task.spawn(function()
-                for _ = 1, 30 do -- ~6s for the pillars to spawn in
-                    local p, inst = findNukeCover(pos)
-                    if p then
-                        BetweenNukeCover = { Pos = p, Pillar = inst, Expires = tick() + 12 }
-                        return
+                    -- pillars can lag or get replaced mid-window - keep
+                    -- upgrading the dive fallback to real cover
+                    if not (c.Pillar and c.Pillar.Parent) then
+                        local np, ni = findNukeCover(pos)
+                        if np then c.Pos, c.Pillar = np, ni end
                     end
                     task.wait(0.2)
-                end
-                if not BetweenNukeCover then
-                    BetweenNukeCover = { Pos = pos - Vector3.new(0, 250, 0), Expires = tick() + 12 }
                 end
             end)
         end,
