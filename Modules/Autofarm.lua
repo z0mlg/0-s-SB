@@ -539,14 +539,11 @@ local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
 local NukeArmAt = 0
 
+-- the watcher owns cover lifecycle - a tracked pillar despawning mid-window
+-- just gets re-picked next tick, it must NOT release the whole window here
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
-    if not c then return end
-    if c.Pillar and not c.Pillar.Parent then
-        BetweenNukeCover = nil
-        return
-    end
-    if tick() < c.Expires then return c.Pos end
+    if c and tick() < c.Expires then return c.Pos end
 end
 
 local rubricatusAlive = function()
@@ -643,6 +640,9 @@ local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
     local cover = nukeCoverPoint()
     if cover then return cover end
+    -- nuke window is armed but no cover resolved this tick: hold position -
+    -- letting zones move us would drag us out of the pillar's shadow
+    if nukeWatchRunning then return pos end
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
