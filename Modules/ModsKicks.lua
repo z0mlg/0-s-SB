@@ -154,6 +154,8 @@ ModDetector:AddToggle('PanicBlockHop', {
 ModDetector:AddSlider('PanicPlayerDelay', { Text = 'Block + hop after', Default = 30, Min = 5, Max = 120, Rounding = 0, Suffix = 's', Compact = true })
 ModDetector:AddDropdown('PanicWhitelist', { Text = 'Panic whitelist', Values = {}, SpecialType = 'Player', Multi = true, AllowNull = true })
 
+local panicSweep -- forward decl: defined with the panic system below
+
 local modCheck = function(player, leaving)
     if player == LocalPlayer or not table.find(mods, player.UserId) then return end
     Library:Notify(`Mod {player.Name} {leaving and 'left' or 'joined'} your game at {os.date('%I:%M:%S %p')}`, 60)
@@ -162,11 +164,16 @@ local modCheck = function(player, leaving)
 
     task.spawn(function()
         if not (Toggles.AutoBlockMods and Toggles.AutoBlockMods.Value) then return end
-        if not blockPlayer(player) then return end
-        -- block verified server-side: bounce to the hub before the mod can see us
+        -- remember the farm spot BEFORE the sweep kills us - that's what the
+        -- server-switch config restores to on the next floor
+        local resumePos = HumanoidRootPart and HumanoidRootPart.Position
+        -- same as player panic: sweep suspicious toggles, respawn at spawn,
+        -- keep autoswing - look AFK while the block verifies
+        if panicSweep then panicSweep(player) end
+        if not blockPlayer(player) then return end -- only returns once verified blocked
         if not (Toggles.ServerSwitch and Toggles.ServerSwitch.Value) then return end
-        if saveServerSwitchConfig and HumanoidRootPart then
-            saveServerSwitchConfig(game.PlaceId, HumanoidRootPart.Position)
+        if saveServerSwitchConfig and resumePos then
+            saveServerSwitchConfig(game.PlaceId, resumePos)
         end
         pcall(function()
             game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
@@ -230,7 +237,7 @@ local panicResumePos
 local panicWatching = {}
 local panicRestore = nil -- name -> value the toggle had before the sweep
 
-local panicSweep = function(offender)
+panicSweep = function(offender)
     panicSwept = true
     panicRestore = panicRestore or {} -- merge: a re-sweep must not lose state
     panicResumePos = HumanoidRootPart and HumanoidRootPart.Position

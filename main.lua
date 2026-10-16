@@ -670,8 +670,8 @@ end
 
 blockPlayer = function(player)
     -- retries until the block is verified server-side; stops if the target
-    -- leaves (nothing left to block). Tight pacing: we want the verified block
-    -- fast so whoever called us can hop before we're seen.
+    -- leaves (nothing left to block). Tight verify loop after every click so
+    -- the caller can hop the instant the block actually lands.
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
@@ -691,10 +691,10 @@ blockPlayer = function(player)
             end
         end
 
-        task.wait(0.3)
-        if isPlayerBlocked(player) then return true end
-
-        task.wait(1.5)
+        for _ = 1, 10 do -- ~1s of tight verification before re-prompting
+            task.wait(0.1)
+            if isPlayerBlocked(player) then return true end
+        end
     end
     return true -- target left: nothing left to block
 end
@@ -738,17 +738,41 @@ local joinGateBlockAndHop = function()
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
-    -- block at most 2 of them, in the background - we're here for a fast hop,
-    -- not a clean blocklist; teleport leaves before verification anyway
-    local blocked = 0
+    -- panic-style while the block goes through: we already killed the
+    -- suspicious toggles above; now respawn to spawn and keep autoswing on so
+    -- we just look like an idle player, not a farmer
+    if Humanoid and Humanoid.Health > 0 then
+        pcall(function() Humanoid.Health = 0 end)
+        task.delay(2, function()
+            if Toggles and Toggles.Autoswing and not Toggles.Autoswing.Value then
+                pcall(function() Toggles.Autoswing:SetValue(true) end)
+            end
+        end)
+    end
+
+    -- block at most 2 of them and WAIT for the blocks to verify server-side -
+    -- we only leave once they're actually on the blocklist (cap 8s so a stuck
+    -- modal can't hold us in the server forever)
+    local pending = {}
     for _, p in next, Players:GetPlayers() do
-        if blocked >= 2 then break end
+        if #pending >= 2 then break end
         if not isGateExempt(p) then
-            task.spawn(blockPlayer, p)
-            blocked += 1
+            table.insert(pending, p)
         end
     end
-    task.wait(0.5) -- let the block prompts actually fire before we leave
+    for _, p in next, pending do
+        task.spawn(blockPlayer, p)
+    end
+    local deadline = tick() + 8
+    while #pending > 0 and tick() < deadline do
+        for i = #pending, 1, -1 do
+            local p = pending[i]
+            if not p.Parent or isPlayerBlocked(p) then
+                table.remove(pending, i)
+            end
+        end
+        task.wait(0.1)
+    end
     pcall(function()
         if writefile and isfolder and HumanoidRootPart then
             if not isfolder('Bluu') then makefolder('Bluu') end
