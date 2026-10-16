@@ -529,14 +529,15 @@ local zoneHit = function(zone, x, z, now)
 end
 
 -- Rubricatus' nuke: the kill check is line-of-sight from the blast point and
--- the arena spawns 'Pillar' Models for the hide window. PILLARS EXISTING IS
--- THE NUKE - while any are in workspace every position resolve pins us to the
--- far side of the nearest one along the threat->pillar axis, touching or not.
--- Armed by pillar spawns themselves so it works even if the skill remote
--- never reaches us; the remote only supplies the blast point.
+-- the arena spawns 'Pillar' Models to hide behind. Pillars supply the SPOT;
+-- the attack signal supplies the WINDOW: a RubricatusNuke remote or a pillar
+-- spawn during a live-Rubricatus wave arms the window, and it stays up while
+-- the server's WaveCountdown hides you / until it goes stale. Between casts
+-- we farm normally again.
 BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
 local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
+local NukeArmAt = 0
 
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
@@ -595,20 +596,32 @@ local findNukeCover = function(threat)
     return Vector3.new(behind.X, baseY, behind.Z), bestInst
 end
 
--- one watcher owns the nuke window: while ANY pillar model exists the cover
--- point tracks the nearest live pillar; none left = attack over, release
+-- one watcher owns the nuke window: while it's live and a pillar exists the
+-- cover point tracks the nearest one's far side. Ends on: the server's
+-- WaveCountdown clearing (detonation), a 14s stale window, or zero pillars.
 local armNukeWatch
 armNukeWatch = function()
+    NukeArmAt = tick() -- every signal refreshes the window
     if nukeWatchRunning then return end
     nukeWatchRunning = true
     task.spawn(function()
+        local sawCountdown
         while getgenv().Bluu ~= false do
+            local now = tick()
+            if workspace:GetAttribute('WaveCountdown') ~= nil then
+                sawCountdown = true
+                NukeArmAt = now -- the server's hide timer is live
+            elseif sawCountdown then
+                break -- countdown cleared = nuke detonated
+            elseif now - NukeArmAt > 14 then
+                break -- no signal in 14s = window over
+            end
             local p, inst = findNukeCover(nukeThreatPos())
-            if not p then break end
+            if not p then break end -- zero pillars = nothing to hide behind
             if not BetweenNukeCover then BetweenNukeCover = {} end
             BetweenNukeCover.Pos = p
             BetweenNukeCover.Pillar = inst
-            BetweenNukeCover.Expires = tick() + 3
+            BetweenNukeCover.Expires = now + 3
             task.wait(0.15)
         end
         BetweenNukeCover = nil
@@ -616,7 +629,8 @@ armNukeWatch = function()
     end)
 end
 
--- a pillar spawning IS the nuke windup - no remote needed
+-- a pillar spawning during a live Rubricatus wave = the nuke windup -
+-- covers the case where the skill remote never reaches us
 workspace.DescendantAdded:Connect(function(inst)
     if getgenv().Bluu == false then return end
     if not (inst:IsA('Model') and inst.Name:find('Pillar', 1, true)) then return end
@@ -897,13 +911,16 @@ local SkillZoneHandlers = {
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
     -- Rubricatus nuke: the remote only contributes the blast point; the
-    -- pillar watcher owns the window (pillar spawn = cast, despawn = over)
+    -- pillar watcher owns the window (spawn = windup, despawn = over)
     RubricatusNuke = {
         Replicating = function(enemy, pos)
             if typeof(pos) == 'Vector3' then NukeBlastPos, NukeBlastAt = pos, tick() end
             armNukeWatch()
         end,
-        Trigger = function() armNukeWatch() end,
+        Trigger = function()
+            armNukeWatch()
+            NukeArmAt = tick() - 10 -- detonated: only a ~4s tail left
+        end,
     },
 }
 SkillZoneHandlers.ShadowBeam = SkillZoneHandlers.SinisterLaser -- same beam-to-point layout
