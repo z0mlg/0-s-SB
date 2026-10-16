@@ -333,28 +333,15 @@ end
 
 -- 'Low' zones are escaped by dropping under them instead of sidestepping -
 -- for the big attacks (lava sections, tempest strikes, wave-boss hits) where
--- nothing can reach us below. Zones with a big footprint get marked Low
--- automatically; 'enemy' caster zones are normal mob attacks - sidestep those
+-- below-floor diving is reserved for mechanics that can't be escaped on X/Z
+-- (lava floor, Tempest slam). Everything else dodges horizontally only -
+-- sinking under an attack is useless and breaks pillar cover during nukes.
 local lowDepth = function()
     return (Options.DodgeLowDepth and Options.DodgeLowDepth.Value) or 80
-end
-local lowMinSize = function()
-    return (Options.DodgeLowSize and Options.DodgeLowSize.Value) or 45
-end
-
-local zoneFootprint = function(zone)
-    if zone.R then return zone.R end
-    if zone.Size then return math.max(zone.Size.X, zone.Size.Z) * 0.5 end
-    local size = zone.LastSize or (zone.Part and zone.Part:IsA('BasePart') and zone.Part.Size)
-    if size then return math.max(size.X, size.Z) * 0.5 end
-    return 0
 end
 
 local addZone = function(zone)
     if zone.Skill == nil then zone.Skill = pendingSkill end
-    if zone.Low == nil and zone.Kind ~= 'enemy' then
-        zone.Low = zoneFootprint(zone) >= lowMinSize()
-    end
     table.insert(DangerZones.List, zone)
     -- dodge the same instant the attack is detected, not on the next farm tick
     if DangerZones.ApplyNow then
@@ -541,14 +528,19 @@ local zoneHit = function(zone, x, z, now)
     return ex, ez
 end
 
--- Rubricatus' nuke kills anything with line-of-sight to its surface point;
--- the only defense is standing behind a pillar. While a cover spot is armed
--- every position resolve snaps to it until the blast window passes.
+-- Rubricatus' nuke: the kill check is line-of-sight from the blast point and
+-- the arena spawns 'Pillar' Models for the hide window. PILLARS EXISTING IS
+-- THE NUKE - while any are in workspace every position resolve pins us to the
+-- far side of the nearest one along the threat->pillar axis, touching or not.
+-- Armed by pillar spawns themselves so it works even if the skill remote
+-- never reaches us; the remote only supplies the blast point.
 BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
+local nukeWatchRunning = false
+local NukeBlastPos, NukeBlastAt
+
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
     if not c then return end
-    -- pillar despawned = attack over; release immediately, back to farming
     if c.Pillar and not c.Pillar.Parent then
         BetweenNukeCover = nil
         return
@@ -556,37 +548,82 @@ local nukeCoverPoint = function()
     if tick() < c.Expires then return c.Pos end
 end
 
--- the arena spawns 'Pillar' models for the nuke - the kill check is line-of-
--- sight from the blast point, so the safe spot is the FAR SIDE of a pillar
--- along the nuke->pillar axis (its shadow). Take the closest pillar to us and
--- hold the point just past its far face until the window ends.
--- Descendant scan: live pillars may be nested in folders, and names may carry
--- suffixes ('Pillar1' etc.) - match any Model containing 'Pillar'.
-local findNukeCover = function(nukePos)
-    if not (HumanoidRootPart and nukePos) then return end
-    local bestInst, bestDist
+local rubricatusAlive = function()
+    for _, mob in next, Mobs:GetChildren() do
+        if mob.Name:find('Rubricatus', 1, true) and not isDead(mob) then
+            local root = mob:FindFirstChild('HumanoidRootPart')
+            if root then return root end
+        end
+    end
+end
+
+-- shadow direction: fresh blast point from the remote, else the boss's root,
+-- else (inside findNukeCover) the pillar cluster centroid
+local nukeThreatPos = function()
+    if NukeBlastPos and NukeBlastAt and tick() - NukeBlastAt < 25 then
+        return NukeBlastPos
+    end
+    local root = rubricatusAlive()
+    return root and root.Position
+end
+
+local findNukeCover = function(threat)
+    if not HumanoidRootPart then return end
+    local bestInst, bestPivot, bestDist
+    local cx, cz, n = 0, 0, 0
     for _, inst in next, workspace:GetDescendants() do
-        -- boss-spawned cover pillars are Models; the map's static 'Pillar'
-        -- MeshParts are decoration and don't block the nuke - skip those
+        -- boss cover pillars are Models; map 'Pillar' MeshParts are decor
         if inst:IsA('Model') and inst.Name:find('Pillar', 1, true) then
             local ok, cf = pcall(inst.GetPivot, inst)
             if ok and cf then
+                cx, cz, n = cx + cf.X, cz + cf.Z, n + 1
                 local d = (cf.Position - HumanoidRootPart.Position).Magnitude
-                if not bestDist or d < bestDist then bestDist, bestInst = d, inst end
+                if not bestDist or d < bestDist then
+                    bestDist, bestInst, bestPivot = d, inst, cf
+                end
             end
         end
     end
     if not bestInst then return end
-    local pivot = bestInst:GetPivot()
+    threat = threat or Vector3.new(cx / n, bestPivot.Y, cz / n)
     local ok, ext = pcall(bestInst.GetExtentsSize, bestInst)
     local margin = ok and (math.max(ext.X, ext.Z) / 2 + 2) or 8
-    local flat = Vector3.new(pivot.X - nukePos.X, 0, pivot.Z - nukePos.Z)
-    if flat.Magnitude < 0.01 then return pivot.Position, bestInst end
-    -- stand at the pillar's base height on its far side
-    local baseY = ok and (pivot.Y - ext.Y / 2 + 3) or pivot.Y
-    local behind = pivot.Position + flat.Unit * margin
+    local flat = Vector3.new(bestPivot.X - threat.X, 0, bestPivot.Z - threat.Z)
+    if flat.Magnitude < 0.01 then return bestPivot.Position, bestInst end
+    local baseY = ok and (bestPivot.Y - ext.Y / 2 + 3) or bestPivot.Y
+    local behind = bestPivot.Position + flat.Unit * margin
     return Vector3.new(behind.X, baseY, behind.Z), bestInst
 end
+
+-- one watcher owns the nuke window: while ANY pillar model exists the cover
+-- point tracks the nearest live pillar; none left = attack over, release
+local armNukeWatch
+armNukeWatch = function()
+    if nukeWatchRunning then return end
+    nukeWatchRunning = true
+    task.spawn(function()
+        while getgenv().Bluu ~= false do
+            local p, inst = findNukeCover(nukeThreatPos())
+            if not p then break end
+            if not BetweenNukeCover then BetweenNukeCover = {} end
+            BetweenNukeCover.Pos = p
+            BetweenNukeCover.Pillar = inst
+            BetweenNukeCover.Expires = tick() + 3
+            task.wait(0.15)
+        end
+        BetweenNukeCover = nil
+        nukeWatchRunning = false
+    end)
+end
+
+-- a pillar spawning IS the nuke windup - no remote needed
+workspace.DescendantAdded:Connect(function(inst)
+    if getgenv().Bluu == false then return end
+    if not (inst:IsA('Model') and inst.Name:find('Pillar', 1, true)) then return end
+    if not (IN_BETWEEN or rubricatusAlive() or
+        (NukeBlastAt and tick() - NukeBlastAt < 25)) then return end
+    task.defer(armNukeWatch)
+end)
 
 local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
@@ -664,12 +701,12 @@ local tagIsDangerous = function(tag)
     return false
 end
 
--- the generic wave-boss marker suffixes are big attacks -> low dodge
+-- only these still dive under their attack (unavoidable-on-XZ mechanics);
+-- every other zone resolves horizontally so nuke pillar cover keeps working
+local LOW_DODGE_SKILLS = { TempestStrike = true }
 local tagIsLow = function(tag)
-    for _, suffix in next, BETWEEN_TAG_SUFFIXES do
-        if string.sub(tag, -#suffix) == suffix then return true end
-    end
-    return false
+    local sk = tagSkill(tag)
+    return sk ~= nil and LOW_DODGE_SKILLS[sk] == true
 end
 
 -- ground telegraph markers + moving client hitboxes
@@ -859,64 +896,17 @@ local SkillZoneHandlers = {
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
-    -- Rubricatus nuke: LOS kill from the blast point - we must be in a
-    -- pillar's shadow for the whole window no matter what, so the cover
-    -- point overrides every other positioning for its duration.
-    -- One watcher owns the whole lifecycle: arms immediately (deep-dive
-    -- fallback), keeps hunting pillars the entire window (they can lag the
-    -- cast well past the first seconds), tracks the server's own
-    -- 'WaveCountdown' hide timer, and releases the moment it clears.
+    -- Rubricatus nuke: the remote only contributes the blast point; the
+    -- pillar watcher owns the window (pillar spawn = cast, despawn = over)
     RubricatusNuke = {
         Replicating = function(enemy, pos)
-            if typeof(pos) ~= 'Vector3' then return end
-            local p, inst = findNukeCover(pos)
-            BetweenNukeCover = {
-                Pos = p or (pos - Vector3.new(0, 250, 0)),
-                Pillar = inst,
-                Expires = tick() + 12,
-            }
-            task.spawn(function()
-                local sawCountdown
-                for _ = 1, 100 do -- ~20s cap
-                    local c = BetweenNukeCover
-                    if not c then return end
-                    if workspace:GetAttribute('WaveCountdown') ~= nil then
-                        sawCountdown = true
-                        c.Expires = math.max(c.Expires, tick() + 1)
-                    elseif sawCountdown then
-                        BetweenNukeCover = nil -- countdown cleared = detonated
-                        return
-                    end
-                    -- pillars can lag or get replaced mid-window - keep
-                    -- upgrading the dive fallback to real cover
-                    if not (c.Pillar and c.Pillar.Parent) then
-                        local np, ni = findNukeCover(pos)
-                        if np then c.Pos, c.Pillar = np, ni end
-                    end
-                    task.wait(0.2)
-                end
-            end)
+            if typeof(pos) == 'Vector3' then NukeBlastPos, NukeBlastAt = pos, tick() end
+            armNukeWatch()
         end,
-        Trigger = function(enemy)
-            local c = BetweenNukeCover
-            if c then c.Expires = math.max(c.Expires, tick() + 4) end
-        end,
+        Trigger = function() armNukeWatch() end,
     },
 }
 SkillZoneHandlers.ShadowBeam = SkillZoneHandlers.SinisterLaser -- same beam-to-point layout
-
--- wave-defense skills/bosses whose attacks are the big stuff we drop under
-local BIG_ATTACK_SKILLS = { TempestStrike = true, FireyOrb = true }
-local WAVE_BOSSES = { 'Rubricatus', 'Vaelith', 'Nythrane', 'Aegor' }
-local skillIsBig = function(enemy, skillName)
-    if not IN_BETWEEN then return false end
-    if BIG_ATTACK_SKILLS[skillName] then return true end
-    local name = typeof(enemy) == 'Instance' and enemy.Name or ''
-    for _, boss in next, WAVE_BOSSES do
-        if name:find(boss) then return true end
-    end
-    return false
-end
 
 -- one caster-following zone per enemy; recasts extend it instead of stacking
 local casterZones = setmetatable({}, { __mode = 'k' })
@@ -1006,7 +996,7 @@ task.spawn(function()
         pendingSkill = skillName
         local fn = SkillZoneHandlers[skillName] and SkillZoneHandlers[skillName][phaseKey]
         if not (fn and pcall(fn, enemy, table.unpack(args))) then
-            genericSkillZones(enemy, args, skillIsBig(enemy, skillName))
+            genericSkillZones(enemy, args, LOW_DODGE_SKILLS[skillName] == true)
         end
         pendingSkill = nil
     end)
