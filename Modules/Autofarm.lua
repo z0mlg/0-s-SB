@@ -1967,8 +1967,48 @@ if IN_BETWEEN or game.PlaceId == 121252145396212 then
     DODGE_PLACE_SKILLS[game.PlaceId] = BETWEEN_SKILLS
 end
 
-local dodgeAttackList = {}
+local DodgeBox = DodgeTab:AddLeftGroupbox('Attack sizes', 'scaling')
+local DodgeListBox = DodgeTab:AddRightGroupbox('Configured', 'list')
+
 local manualDodgeSkills = {} -- names added by hand via the input box
+local dodgeControls = {} -- attack name -> slider option id (section exists)
+local suppressScaleWrite = false
+
+-- one section per attack: divider with its name, its own size slider, and a
+-- reset back to the global scale. Created on demand as attacks get discovered.
+local makeDodgeSection
+makeDodgeSection = function(name)
+    if dodgeControls[name] then return end
+    local key = 'DodgeScale_' .. string.gsub(name, '[^%w]', '_')
+    dodgeControls[name] = key
+
+    DodgeBox:AddDivider({ Text = name })
+    DodgeBox:AddSlider(key, {
+        Text = 'Zone size',
+        Default = DodgeSkillScales[name] or dodgeScale(),
+        Min = 0.5,
+        Max = 10,
+        Rounding = 1,
+        Suffix = 'x',
+        Compact = true,
+        Tooltip = `Dodge zone size for {name} - overrides the global scale`,
+    }):OnChanged(function(value)
+        if suppressScaleWrite then return end
+        DodgeSkillScales[name] = value
+        saveDodgeScales()
+    end)
+    DodgeBox:AddButton({
+        Text = `Use global size ({name})`,
+        Func = function()
+            DodgeSkillScales[name] = nil
+            saveDodgeScales()
+            suppressScaleWrite = true
+            pcall(function() Options[key]:SetValue(dodgeScale()) end)
+            suppressScaleWrite = false
+        end,
+    })
+end
+
 local refreshDodgeAttacks
 refreshDodgeAttacks = function()
     local set = {}
@@ -1984,80 +2024,32 @@ refreshDodgeAttacks = function()
         end
     end
     for name in next, DodgeSkillScales do set[name] = true end -- overrides never hide
-    local selected = Options.DodgeAttack and Options.DodgeAttack.Value
-    if type(selected) == 'string' and selected ~= '' then set[selected] = true end
 
-    local list = {}
-    for name in next, set do table.insert(list, name) end
-    table.sort(list)
-    local same = #list == #dodgeAttackList
-    if same then
-        for i, name in next, list do
-            if dodgeAttackList[i] ~= name then same = false break end
-        end
-    end
-    if same then return end
-    dodgeAttackList = list
-    pcall(function() Options.DodgeAttack:SetValues(list) end)
+    local names = {}
+    for name in next, set do table.insert(names, name) end
+    table.sort(names)
+    for _, name in next, names do makeDodgeSection(name) end
 end
 
-local DodgeBox = DodgeTab:AddLeftGroupbox('Attack sizes', 'scaling')
-local DodgeListBox = DodgeTab:AddRightGroupbox('Configured', 'list')
-local suppressScaleWrite = false
-
-DodgeBox:AddDropdown('DodgeAttack', {
-    Text = 'Attack',
-    Values = {},
-    AllowNull = true,
-    Tooltip = 'Attacks on this floor: seen live, plus everything bosses here can cast'
-}):OnChanged(function(name)
-    if not name then return end
-    -- reflect the attack's saved scale without writing it back as an override
-    suppressScaleWrite = true
-    pcall(function()
-        Options.DodgeAttackScale:SetValue(DodgeSkillScales[name] or dodgeScale())
-    end)
-    suppressScaleWrite = false
-end)
-
 DodgeBox:AddInput('DodgeAttackName', {
-    Text = 'Or add attack by name',
-    Tooltip = 'Exact skill name (e.g. LavaSmash) - for attacks not seen yet',
+    Text = 'Add attack by name',
+    Tooltip = 'Exact skill name (e.g. LavaSmash) - creates a section for attacks not seen yet',
     Finished = true,
     Placeholder = 'LavaSmash'
 }):OnChanged(function(name)
     if type(name) ~= 'string' or name == '' then return end
     manualDodgeSkills[name] = true
-    refreshDodgeAttacks()
-    Options.DodgeAttack:SetValue(name)
+    makeDodgeSection(name)
 end)
 
-DodgeBox:AddSlider('DodgeAttackScale', {
-    Text = 'Zone size',
-    Default = 2,
-    Min = 0.5,
-    Max = 10,
-    Rounding = 1,
-    Suffix = 'x',
-    Compact = true,
-    Tooltip = 'Replaces the global dodge scale for the selected attack - saved instantly'
-}):OnChanged(function(value)
-    if suppressScaleWrite then return end
-    local name = Options.DodgeAttack and Options.DodgeAttack.Value
-    if type(name) ~= 'string' or name == '' then return end
-    DodgeSkillScales[name] = value
+DodgeListBox:AddButton('Reset all to global', function()
+    table.clear(DodgeSkillScales)
     saveDodgeScales()
-end)
-
-DodgeBox:AddButton('Use global size for attack', function()
-    local name = Options.DodgeAttack and Options.DodgeAttack.Value
-    if type(name) ~= 'string' or name == '' then
-        Library:Notify('Pick an attack first', 3)
-        return
+    suppressScaleWrite = true
+    for _, key in next, dodgeControls do
+        pcall(function() Options[key]:SetValue(dodgeScale()) end)
     end
-    DodgeSkillScales[name] = nil
-    saveDodgeScales()
-    Options.DodgeAttackScale:SetValue(dodgeScale())
+    suppressScaleWrite = false
 end)
 
 local dodgeCfgLabel = DodgeListBox:AddLabel('')
