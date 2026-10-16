@@ -798,6 +798,18 @@ if joinGateArmed then
     end)
 end
 
+-- mid-session watch for the whole run: while Restart Server stays on, anyone
+-- joining at any point triggers the same block + hub bounce (the gate re-arms
+-- on the next join via the restartgate file)
+Players.PlayerAdded:Connect(function(player)
+    if getgenv().Bluu == false then return end
+    if IN_BETWEEN then return end
+    if not (Toggles and Toggles.RestartServer and Toggles.RestartServer.Value) then return end
+    if isGateExempt(player) then return end
+    warn('[Bluu] Restart server: player joined mid-session - blocking and hopping')
+    joinGateBlockAndHop()
+end)
+
 -- ===================== MODULE LOADER =====================
 -- Modules run as plain chunks that share this script's global env.
 local MODULES = {
