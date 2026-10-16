@@ -408,19 +408,25 @@ end
 
 stopSwingFunction = nil
 swingFunction = (function()
+    -- prefer the Actions service swing: a bare getgc scan for 'Swing' can grab
+    -- an enemy skill's u3.Swing (RubricatusSlam etc.) - calling it argless
+    -- errors inside their module and never swings our sword
+    if RequiredServices then
+        stopSwingFunction = RequiredServices.Actions.StopSwing
+        return RequiredServices.Actions.StartSwing
+    end
     if not getgc then return end
     for _, func in next, getgc() do
         if type(func) == 'function' and debug.info(func, 'n') == 'Swing' then
-            stopSwingFunction = function() end
-            return func
+            -- only the player swing inside the Actions service counts
+            local src = debug.info(func, 's') or ''
+            if src:find('Services.Actions') then
+                stopSwingFunction = function() end
+                return func
+            end
         end
     end
 end)()
-
-if RequiredServices and not swingFunction then
-    swingFunction = RequiredServices.Actions.StartSwing
-    stopSwingFunction = RequiredServices.Actions.StopSwing
-end
 
 Killaura:AddToggle('Killaura', { Text = 'Enabled' }):OnChanged(function()
     toggleSwingDamage(false)
