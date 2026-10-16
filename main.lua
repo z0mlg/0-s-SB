@@ -661,40 +661,73 @@ local clickBlockButton = function(button)
     task.wait(0.5)
 end
 
+-- the real blocking API the escape menu itself uses (CoreScripts
+-- BlockPlayerPrompt.lua / BlockPlayer thunk): headless block + same-source
+-- verification. GetCore('GetBlockedUserIds') is stale on current clients and
+-- the modal click path fails silently - both explain blocks never landing.
+local BlockingUtility
+pcall(function()
+    BlockingUtility = require(game:GetService('CorePackages').Workspace.Packages.BlockingUtility)
+end)
+
 isPlayerBlocked = function(player)
+    if BlockingUtility then
+        local ok, blocked = pcall(function()
+            return BlockingUtility:IsPlayerBlockedByUserId(player.UserId)
+        end)
+        if ok then return blocked == true end
+    end
+    -- legacy fallback (returns a JSON string on old clients, [] on new ones)
     local ok, blocked = pcall(function()
         return StarterGui:GetCore('GetBlockedUserIds')
     end)
-    return ok and type(blocked) == 'table' and table.find(blocked, player.UserId) ~= nil
+    if not ok then return false end
+    if type(blocked) == 'string' then
+        local ok2, decoded = pcall(function()
+            return game:GetService('HttpService'):JSONDecode(blocked)
+        end)
+        if ok2 then blocked = decoded end
+    end
+    if type(blocked) ~= 'table' then return false end
+    for _, userId in next, blocked do
+        if tonumber(userId) == player.UserId then return true end
+    end
+    return false
 end
 
 blockPlayer = function(player)
-    -- retries until the block is verified server-side; stops if the target
-    -- leaves (nothing left to block). Tight verify loop after every click so
-    -- the caller can hop the instant the block actually lands.
+    -- retries until the block is verified; stops if the target leaves.
+    -- BlockingUtility path is headless (what the menu calls on confirm);
+    -- modal+click is only a fallback when the package can't be required.
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
-        StarterGui:SetCore('PromptBlockPlayer', player)
-
-        local modal
-        for _ = 1, 40 do
-            modal = findBlockModal()
-            if modal then break end
-            task.wait(0.05)
-        end
-
-        if modal then
-            local button = findBlockButton(modal)
-            if button then
-                clickBlockButton(button)
+        local prompted = false
+        if BlockingUtility then
+            pcall(function() BlockingUtility:BlockPlayerAsync(player) end)
+            prompted = true
+        else
+            StarterGui:SetCore('PromptBlockPlayer', player)
+            local modal
+            for _ = 1, 40 do
+                modal = findBlockModal()
+                if modal then break end
+                task.wait(0.05)
+            end
+            if modal then
+                local button = findBlockButton(modal)
+                if button then
+                    clickBlockButton(button)
+                    prompted = true
+                end
             end
         end
 
-        for _ = 1, 10 do -- ~1s of tight verification before re-prompting
+        for _ = 1, 10 do -- ~1s of tight verification before retrying
             task.wait(0.1)
             if isPlayerBlocked(player) then return true end
         end
+        if not prompted then task.wait(0.5) end -- nothing fired: back off a bit
     end
     return true -- target left: nothing left to block
 end
