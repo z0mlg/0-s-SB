@@ -672,17 +672,18 @@ end
 
 blockPlayer = function(player)
     -- retries until the block is verified server-side; stops if the target
-    -- leaves (nothing left to block). 5s between each attempt.
+    -- leaves (nothing left to block). Tight pacing: we want the verified block
+    -- fast so whoever called us can hop before we're seen.
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
         StarterGui:SetCore('PromptBlockPlayer', player)
 
         local modal
-        for _ = 1, 50 do
+        for _ = 1, 40 do
             modal = findBlockModal()
             if modal then break end
-            task.wait(0.1)
+            task.wait(0.05)
         end
 
         if modal then
@@ -692,10 +693,10 @@ blockPlayer = function(player)
             end
         end
 
-        task.wait(0.5)
+        task.wait(0.3)
         if isPlayerBlocked(player) then return true end
 
-        task.wait(5)
+        task.wait(1.5)
     end
     return true -- target left: nothing left to block
 end

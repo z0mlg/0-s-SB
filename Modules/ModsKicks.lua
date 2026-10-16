@@ -160,7 +160,18 @@ local modCheck = function(player, leaving)
 
     if leaving then return end
 
-    task.spawn(blockPlayer, player)
+    task.spawn(function()
+        if not (Toggles.AutoBlockMods and Toggles.AutoBlockMods.Value) then return end
+        if not blockPlayer(player) then return end
+        -- block verified server-side: bounce to the hub before the mod can see us
+        if not (Toggles.ServerSwitch and Toggles.ServerSwitch.Value) then return end
+        if saveServerSwitchConfig and HumanoidRootPart then
+            saveServerSwitchConfig(game.PlaceId, HumanoidRootPart.Position)
+        end
+        pcall(function()
+            game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+        end)
+    end)
 
     task.delay(Options.KickDelay.Value, function()
         if Toggles.Autokick.Value then

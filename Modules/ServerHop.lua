@@ -78,18 +78,21 @@ local function autoBlockModerator(player)
             end
 
             if Toggles.ServerSwitch and Toggles.ServerSwitch.Value then
-                task.wait(1)
+                -- block verified: leave immediately, before they can inspect us
                 print("[Server Switch] Moderator detected! Switching servers...")
                 Library:Notify('⚠ Moderator detected!\nSwitching servers...', 5)
 
                 local originalFloor = game.PlaceId
-                local currentPosition = HumanoidRootPart.Position
-
-                saveServerSwitchConfig(originalFloor, currentPosition)
-                print('[Server Switch] Saved position:', currentPosition)
+                local currentPosition = HumanoidRootPart and HumanoidRootPart.Position
+                if currentPosition then
+                    saveServerSwitchConfig(originalFloor, currentPosition)
+                    print('[Server Switch] Saved position:', currentPosition)
+                end
 
                 print('[Server Switch] Teleporting to Hub World...')
-                game:GetService("TeleportService"):Teleport(659222129, LocalPlayer)
+                pcall(function()
+                    game:GetService("TeleportService"):Teleport(659222129, LocalPlayer)
+                end)
             end
         end)
     end
