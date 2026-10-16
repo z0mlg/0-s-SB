@@ -600,57 +600,32 @@ GuiService = GuiService or game:GetService('GuiService')
 local VirtualInputManager = game:GetService('VirtualInputManager')
 
 local findBlockModal = function()
-    -- current client: React modal mounted at CoreGui.RobloxGui.BlockingContainer
-    local robloxGui = CoreGui:FindFirstChild('RobloxGui')
-    local container = robloxGui and robloxGui:FindFirstChild('BlockingContainer')
-    if container then return container end
     local overlay = CoreGui:FindFirstChild('FoundationOverlay')
     if overlay then
         local modal = overlay:FindFirstChild('BlockingModalScreen', true)
         if modal and not modal:IsA('ModuleScript') then return modal end
     end
     for _, descendant in ipairs(CoreGui:GetDescendants()) do
-        if (descendant.Name == 'BlockingModalScreen' or descendant.Name == 'BlockingContainer')
-            and not descendant:IsA('ModuleScript') then
+        if descendant.Name == 'BlockingModalScreen' and not descendant:IsA('ModuleScript') then
             return descendant
         end
     end
 end
 
 local findBlockButton = function(modal)
-    -- the ActionModal stack is Cancel / BlockAndReport / Block: prefer the
-    -- exact 'Block' label, fall back to 'Block and Report' (still blocks).
-    -- 'Unblock'/'Cancel' are never matched, so we can't undo a block.
-    local secondary
-    for _, button in ipairs(modal:GetDescendants()) do
-        if button:IsA('GuiButton') then
-            local ownText = (button:IsA('TextButton') or button:IsA('ImageButton'))
-                and button.Text or nil
-            if ownText == 'Block' then return button end
-            if ownText == 'Block and Report' then secondary = secondary or button end
-            for _, label in ipairs(button:GetDescendants()) do
-                if label:IsA('TextLabel') or label:IsA('TextButton') then
-                    if label.Text == 'Block' then return button end
-                    if label.Text == 'Block and Report' then
-                        secondary = secondary or button
-                    end
-                end
+    for _, label in ipairs(modal:GetDescendants()) do
+        if label:IsA('TextLabel') and label.Text == 'Block' then
+            local parent = label.Parent
+            while parent and parent ~= modal do
+                if parent:IsA('GuiButton') then return parent end
+                parent = parent.Parent
             end
         end
     end
-    -- positional fallback: Footer stack order Cancel = 1, BlockAndReport = 2,
-    -- Block = 3 - if '3' isn't the button itself, grab the GuiButton inside it
+    -- Footer stack order: Cancel = 1, BlockAndReport = 2, Block = 3
     local footer = modal:FindFirstChild('Footer', true)
     local buttons = footer and footer:FindFirstChild('Buttons', true)
-    local third = buttons and buttons:FindFirstChild('3')
-    if third then
-        if third:IsA('GuiButton') then return third end
-        for _, d in ipairs(third:GetDescendants()) do
-            if d:IsA('GuiButton') then return d end
-        end
-        return third -- last resort: at least the mouse-click path gets a position
-    end
-    return secondary
+    return buttons and buttons:FindFirstChild('3')
 end
 
 local clickBlockButton = function(button)
@@ -686,64 +661,59 @@ local clickBlockButton = function(button)
     task.wait(0.5)
 end
 
--- the real blocking API the escape menu itself uses (CoreScripts
--- BlockPlayerPrompt.lua / BlockPlayer thunk): headless block + same-source
--- verification. GetCore('GetBlockedUserIds') is stale on current clients and
--- the modal click path fails silently - both explain blocks never landing.
-local BlockingUtility
-pcall(function()
-    BlockingUtility = require(game:GetService('CorePackages').Workspace.Packages.BlockingUtility)
-end)
-
 isPlayerBlocked = function(player)
-    if BlockingUtility then
-        local ok, blocked = pcall(function()
-            return BlockingUtility:IsPlayerBlockedByUserId(player.UserId)
-        end)
-        if ok and blocked == true then return true end
-    end
-    -- GetCore('GetBlockedUserIds') as a second source - either one reporting
-    -- the id counts as blocked (returns a JSON string on some clients)
     local ok, blocked = pcall(function()
         return StarterGui:GetCore('GetBlockedUserIds')
     end)
     if not ok then return false end
+    -- some cores hand it back as a JSON string instead of a table
     if type(blocked) == 'string' then
         local ok2, decoded = pcall(function()
             return game:GetService('HttpService'):JSONDecode(blocked)
         end)
-        if ok2 then blocked = decoded end
+        blocked = ok2 and decoded or nil
     end
     if type(blocked) ~= 'table' then return false end
-    for _, userId in next, blocked do
-        if tonumber(userId) == player.UserId then return true end
+    for _, id in next, blocked do
+        if tonumber(id) == player.UserId then return true end
+    end
+    return false
+end
+
+-- don't hop until every target is confirmed in the server-side blocklist (or
+-- has left - nothing to block). Capped so a dead modal can't seat us forever.
+waitAllBlocked = function(targets, timeout)
+    local deadline = tick() + (timeout or 15)
+    while tick() < deadline do
+        local pending = false
+        for _, p in next, targets do
+            if p.Parent and not isPlayerBlocked(p) then
+                pending = true
+                break
+            end
+        end
+        if not pending then return true end
+        task.wait(0.2)
     end
     return false
 end
 
 blockPlayer = function(player)
-    -- retries until the block is verified; stops if the target leaves.
-    -- BlockPlayerAsync RAISES the same confirm prompt the escape menu shows
-    -- (and can yield on it, hence task.spawn) - so whichever path fires, we
-    -- then hunt the modal and press Block via SelectedCoreObject + Enter.
+    -- retries until the block is verified server-side; stops if the target
+    -- leaves (nothing left to block). Tight pacing: we want the verified block
+    -- fast so whoever called us can hop before we're seen.
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
-        if BlockingUtility then
-            task.spawn(function()
-                pcall(BlockingUtility.BlockPlayerAsync, BlockingUtility, player)
-            end)
-        else
-            StarterGui:SetCore('PromptBlockPlayer', player)
-        end
+        StarterGui:SetCore('PromptBlockPlayer', player)
 
         local modal
         for _ = 1, 40 do
-            if isPlayerBlocked(player) then return true end -- headless landed, skip the hunt
             modal = findBlockModal()
             if modal then break end
             task.wait(0.05)
         end
+
         if modal then
             local button = findBlockButton(modal)
             if button then
@@ -751,10 +721,10 @@ blockPlayer = function(player)
             end
         end
 
-        for _ = 1, 10 do -- ~1s of tight verification before retrying
-            task.wait(0.1)
-            if isPlayerBlocked(player) then return true end
-        end
+        task.wait(0.3)
+        if isPlayerBlocked(player) then return true end
+
+        task.wait(1.5)
     end
     return true -- target left: nothing left to block
 end
@@ -783,64 +753,34 @@ local isGateExempt = function(player)
 end
 
 local lastGateTeleport
-local gateBusy = false
-local joinGateBlockAndHop
-joinGateBlockAndHop = function()
-    if gateBusy then return end -- a second joiner mid-verify rides the same hop
-    gateBusy = true
-
-    -- panic, same playbook as the Misc tab player-panic: sweep every
-    -- suspicious toggle, respawn so we land at spawn, keep autoswing on so
-    -- we just look AFK while the blocks verify
+local joinGateBlockAndHop = function()
+    -- if modules/autoload already spun automation up, kill it before blocking
+    -- (same suspicious-toggle list as the panic sweep: attacks + movement)
     if Toggles then
         for _, name in next, {
             'Autofarm', 'Killaura', 'KillauraSwing', 'UseSkillPreemptively',
             'AttackPlayers', 'SendTrades', 'EnablePathFarming', 'Autowalk',
             'Pathfind', 'Fly', 'Noclip', 'ClickTeleport', 'DodgeAttacks',
             'ReturnOnDeath', 'ResetOnLowStamina', 'AutoJoinNewFloor',
-            'EscapeOnLowHealth', 'GoToPlayer', 'EmergencyEscape',
+            'GoToPlayer', 'EmergencyEscape',
         } do
             local t = Toggles[name]
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
-    pcall(toggleLerp)
-    pcall(enableLinearVelocity, false)
-    if Humanoid and Humanoid.Health > 0 then
-        pcall(function() Humanoid.Health = 0 end)
-    end
-    task.delay(2, function()
-        if Toggles and Toggles.Autoswing and not Toggles.Autoswing.Value then
-            pcall(function() Toggles.Autoswing:SetValue(true) end)
-        end
-    end)
-
-    -- block at most 2 of them: blockPlayer keeps re-prompting in the
-    -- background until the id lands on the blocklist (or they leave)
+    -- block at most 2 of them, then HOLD until GetBlockedUserIds confirms
+    -- every one of them - leaving before the block lands defeats the point
     local targets = {}
     for _, p in next, Players:GetPlayers() do
         if #targets >= 2 then break end
         if not isGateExempt(p) then
             table.insert(targets, p)
-            task.spawn(blockPlayer, p)
         end
     end
-
-    -- separate fast verify loop: polls the blocklist every 0.1s and the
-    -- SECOND every target is confirmed blocked (or left) we hop. No hop
-    -- while anyone unblocked is still in the server - we wait at spawn
-    -- swinging instead, which is the panic look anyway
-    while true do
-        local allClear = true
-        for _, p in next, targets do
-            if p.Parent and not isPlayerBlocked(p) then
-                allClear = false
-                break
-            end
-        end
-        if allClear then break end
-        task.wait(0.1)
+    for _, p in next, targets do
+        task.spawn(blockPlayer, p)
     end
+    waitAllBlocked(targets, 15)
     pcall(function()
         if writefile and isfolder and HumanoidRootPart then
             if not isfolder('Bluu') then makefolder('Bluu') end
@@ -858,18 +798,6 @@ joinGateBlockAndHop = function()
         lastGateTeleport = tick()
         game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
     end)
-    gateBusy = false
-
-    -- if the teleport failed (or someone new joined during verify) and the
-    -- toggle is still on with people still here, run it again
-    if Toggles and Toggles.RestartServer and Toggles.RestartServer.Value then
-        for _, p in next, Players:GetPlayers() do
-            if not isGateExempt(p) then
-                task.delay(2, joinGateBlockAndHop)
-                return
-            end
-        end
-    end
 end
 
 if joinGateArmed then

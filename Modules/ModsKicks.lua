@@ -294,9 +294,10 @@ local panicWatch = function(player)
 
         panicHopping = true
         for _, p in next, offenders do
-            blockPlayer(p)
-            task.wait(5)
+            task.spawn(blockPlayer, p)
         end
+        -- hold until the server-side blocklist confirms them all before hopping
+        waitAllBlocked(offenders, 15)
 
         -- resume this floor + position after the hub bounce makes a new server
         if saveServerSwitchConfig and HumanoidRootPart then
