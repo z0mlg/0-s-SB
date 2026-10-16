@@ -528,128 +528,8 @@ local zoneHit = function(zone, x, z, now)
     return ex, ez
 end
 
--- Rubricatus' nuke: the kill check is line-of-sight from the blast point and
--- the arena spawns 'Pillar' Models to hide behind. Pillars supply the SPOT;
--- the attack signal supplies the WINDOW: a RubricatusNuke remote or a pillar
--- spawn during a live-Rubricatus wave arms the window, and it stays up while
--- the server's WaveCountdown hides you / until it goes stale. Between casts
--- we farm normally again.
-BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
-local nukeWatchRunning = false
-local NukeBlastPos, NukeBlastAt
-local NukeArmAt = 0
-
-local nukeCoverPoint = function()
-    local c = BetweenNukeCover
-    if not c then return end
-    if tick() < c.Expires then return c.Pos end
-end
-
-local rubricatusAlive = function()
-    for _, mob in next, Mobs:GetChildren() do
-        if mob.Name:find('Rubricatus', 1, true) and not isDead(mob) then
-            local root = mob:FindFirstChild('HumanoidRootPart')
-            if root then return root end
-        end
-    end
-end
-
--- shadow direction: fresh blast point from the remote, else the boss's root,
--- else (inside findNukeCover) the pillar cluster centroid
-local nukeThreatPos = function()
-    if NukeBlastPos and NukeBlastAt and tick() - NukeBlastAt < 25 then
-        return NukeBlastPos
-    end
-    local root = rubricatusAlive()
-    return root and root.Position
-end
-
-local findNukeCover = function(threat)
-    if not HumanoidRootPart then return end
-    local bestInst, bestPivot, bestDist
-    local cx, cz, n = 0, 0, 0
-    for _, inst in next, workspace:GetDescendants() do
-        -- boss cover pillars are Models; map 'Pillar' MeshParts are decor
-        if inst:IsA('Model') and inst.Name:find('Pillar', 1, true) then
-            local ok, cf = pcall(inst.GetPivot, inst)
-            if ok and cf then
-                cx, cz, n = cx + cf.X, cz + cf.Z, n + 1
-                local d = (cf.Position - HumanoidRootPart.Position).Magnitude
-                if not bestDist or d < bestDist then
-                    bestDist, bestInst, bestPivot = d, inst, cf
-                end
-            end
-        end
-    end
-    if not bestInst then return end
-    threat = threat or Vector3.new(cx / n, bestPivot.Y, cz / n)
-    local ok, ext = pcall(bestInst.GetExtentsSize, bestInst)
-    local margin = ok and (math.max(ext.X, ext.Z) / 2 + 2) or 8
-    local flat = Vector3.new(bestPivot.X - threat.X, 0, bestPivot.Z - threat.Z)
-    if flat.Magnitude < 0.01 then return bestPivot.Position, bestInst end
-    -- keep our own Y: the shadow is X/Z-only and the pillar's bounding box
-    -- can extend under the floor, which would sink us below the arena
-    local behind = bestPivot.Position + flat.Unit * margin
-    return Vector3.new(behind.X, HumanoidRootPart.Position.Y, behind.Z), bestInst
-end
-
--- one watcher owns the nuke window: while it's live and a pillar exists the
--- cover point tracks the nearest one's far side. Ends on: the server's
--- WaveCountdown clearing (detonation), a 14s stale window, or zero pillars -
--- then holds a 2s tail because the nuke keeps dealing damage after the cast.
-local armNukeWatch
-armNukeWatch = function()
-    NukeArmAt = tick() -- every signal refreshes the window
-    if nukeWatchRunning then return end
-    nukeWatchRunning = true
-    task.spawn(function()
-        local sawCountdown, tailAt
-        while getgenv().Bluu ~= false do
-            local now = tick()
-            local ended = false
-            if workspace:GetAttribute('WaveCountdown') ~= nil then
-                sawCountdown = true
-                NukeArmAt = now -- the server's hide timer is live
-            elseif sawCountdown then
-                ended = true -- countdown cleared = nuke detonated
-            elseif now - NukeArmAt > 14 then
-                ended = true -- window stale
-            end
-            local p, inst = findNukeCover(nukeThreatPos())
-            if not p then ended = true end -- zero pillars = nothing left to hide
-            if ended then
-                if not tailAt then tailAt = now + 2 end
-            else
-                tailAt = nil -- a fresh signal cancels a pending release
-            end
-            if tailAt and now >= tailAt then break end
-            if p then
-                if not BetweenNukeCover then BetweenNukeCover = {} end
-                BetweenNukeCover.Pos = p
-                BetweenNukeCover.Pillar = inst
-            end
-            if BetweenNukeCover then BetweenNukeCover.Expires = now + 3 end
-            task.wait(0.15)
-        end
-        BetweenNukeCover = nil
-        nukeWatchRunning = false
-    end)
-end
-
--- a pillar spawning during a live Rubricatus wave = the nuke windup -
--- covers the case where the skill remote never reaches us
-workspace.DescendantAdded:Connect(function(inst)
-    if getgenv().Bluu == false then return end
-    if not (inst:IsA('Model') and inst.Name:find('Pillar', 1, true)) then return end
-    if not (IN_BETWEEN or rubricatusAlive() or
-        (NukeBlastAt and tick() - NukeBlastAt < 25)) then return end
-    task.defer(armNukeWatch)
-end)
-
 local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
-    local cover = nukeCoverPoint()
-    if cover then return cover end
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
@@ -917,16 +797,29 @@ local SkillZoneHandlers = {
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
-    -- Rubricatus nuke: the remote only contributes the blast point; the
-    -- pillar watcher owns the window (spawn = windup, despawn = over)
+    -- Rubricatus nuke: huge blast centered on the surface point - escape is
+    -- horizontal: the point zone pushes us outside its radius on X/Z (the
+    -- Dodge tab's per-attack Zone size slider scales it). The zone is kept
+    -- alive while the server's WaveCountdown hides-timer runs, then dies 2s
+    -- after it clears - the blast's damage outlives the cast.
     RubricatusNuke = {
         Replicating = function(enemy, pos)
-            if typeof(pos) == 'Vector3' then NukeBlastPos, NukeBlastAt = pos, tick() end
-            armNukeWatch()
-        end,
-        Trigger = function()
-            armNukeWatch()
-            NukeArmAt = tick() - 10 -- detonated: only a ~4s tail left
+            if typeof(pos) ~= 'Vector3' then return end
+            local zone = addPointZone(pos, 160, 16)
+            task.spawn(function()
+                local saw
+                for _ = 1, 120 do
+                    if not table.find(DangerZones.List, zone) then return end
+                    if workspace:GetAttribute('WaveCountdown') ~= nil then
+                        saw = true
+                        zone.Expires = tick() + 3 -- countdown live = keep dodging
+                    elseif saw then
+                        zone.Expires = math.min(zone.Expires, tick() + 2)
+                        return
+                    end
+                    task.wait(0.2)
+                end
+            end)
         end,
     },
 }
@@ -1445,7 +1338,6 @@ if BluuCleanups then
         end
         table.clear(zoneVisuals)
         table.clear(DangerZones.List)
-        BetweenNukeCover = nil
     end)
 end
 
