@@ -539,11 +539,10 @@ local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
 local NukeArmAt = 0
 
--- the watcher owns cover lifecycle - a tracked pillar despawning mid-window
--- just gets re-picked next tick, it must NOT release the whole window here
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
-    if c and tick() < c.Expires then return c.Pos end
+    if not c then return end
+    if tick() < c.Expires then return c.Pos end
 end
 
 local rubricatusAlive = function()
@@ -588,37 +587,48 @@ local findNukeCover = function(threat)
     local margin = ok and (math.max(ext.X, ext.Z) / 2 + 2) or 8
     local flat = Vector3.new(bestPivot.X - threat.X, 0, bestPivot.Z - threat.Z)
     if flat.Magnitude < 0.01 then return bestPivot.Position, bestInst end
-    local baseY = ok and (bestPivot.Y - ext.Y / 2 + 3) or bestPivot.Y
+    -- keep our own Y: the shadow is X/Z-only and the pillar's bounding box
+    -- can extend under the floor, which would sink us below the arena
     local behind = bestPivot.Position + flat.Unit * margin
-    return Vector3.new(behind.X, baseY, behind.Z), bestInst
+    return Vector3.new(behind.X, HumanoidRootPart.Position.Y, behind.Z), bestInst
 end
 
 -- one watcher owns the nuke window: while it's live and a pillar exists the
 -- cover point tracks the nearest one's far side. Ends on: the server's
--- WaveCountdown clearing (detonation), a 14s stale window, or zero pillars.
+-- WaveCountdown clearing (detonation), a 14s stale window, or zero pillars -
+-- then holds a 2s tail because the nuke keeps dealing damage after the cast.
 local armNukeWatch
 armNukeWatch = function()
     NukeArmAt = tick() -- every signal refreshes the window
     if nukeWatchRunning then return end
     nukeWatchRunning = true
     task.spawn(function()
-        local sawCountdown
+        local sawCountdown, tailAt
         while getgenv().Bluu ~= false do
             local now = tick()
+            local ended = false
             if workspace:GetAttribute('WaveCountdown') ~= nil then
                 sawCountdown = true
                 NukeArmAt = now -- the server's hide timer is live
             elseif sawCountdown then
-                break -- countdown cleared = nuke detonated
+                ended = true -- countdown cleared = nuke detonated
             elseif now - NukeArmAt > 14 then
-                break -- no signal in 14s = window over
+                ended = true -- window stale
             end
             local p, inst = findNukeCover(nukeThreatPos())
-            if not p then break end -- zero pillars = nothing to hide behind
-            if not BetweenNukeCover then BetweenNukeCover = {} end
-            BetweenNukeCover.Pos = p
-            BetweenNukeCover.Pillar = inst
-            BetweenNukeCover.Expires = now + 3
+            if not p then ended = true end -- zero pillars = nothing left to hide
+            if ended then
+                if not tailAt then tailAt = now + 2 end
+            else
+                tailAt = nil -- a fresh signal cancels a pending release
+            end
+            if tailAt and now >= tailAt then break end
+            if p then
+                if not BetweenNukeCover then BetweenNukeCover = {} end
+                BetweenNukeCover.Pos = p
+                BetweenNukeCover.Pillar = inst
+            end
+            if BetweenNukeCover then BetweenNukeCover.Expires = now + 3 end
             task.wait(0.15)
         end
         BetweenNukeCover = nil
@@ -640,9 +650,6 @@ local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
     local cover = nukeCoverPoint()
     if cover then return cover end
-    -- nuke window is armed but no cover resolved this tick: hold position -
-    -- letting zones move us would drag us out of the pillar's shadow
-    if nukeWatchRunning then return pos end
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
