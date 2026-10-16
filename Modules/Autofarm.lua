@@ -591,6 +591,8 @@ DangerZones.Resolve = resolveDodge
 -- no zone, no caster zone, no Touched-hitbox window, no marker tags.
 local BOSS_DODGE_ONLY = {
     Aeganatos = { OceanGyzer = true },
+    -- also covers 'Corrupted Atheon': only the aerial slam reaches us under the floor
+    Atheon = { LavaSmash = true },
 }
 local IGNORED_SKILL_TAGS = { 'OmegaWave' } -- known marker prefixes of ignored skills
 
