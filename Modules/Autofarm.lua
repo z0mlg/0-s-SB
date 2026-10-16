@@ -563,7 +563,9 @@ local findNukeCover = function()
     if not HumanoidRootPart then return end
     local best, bestDist, bestInst
     for _, inst in next, workspace:GetChildren() do
-        if inst.Name == 'Pillar' and inst:IsA('PVInstance') then
+        -- boss-spawned cover pillars are Models; the map's static 'Pillar'
+        -- MeshParts are decoration and don't block the nuke - skip those
+        if inst.Name == 'Pillar' and inst:IsA('Model') then
             local ok, cf = pcall(inst.GetPivot, inst)
             if ok and cf then
                 local d = (cf.Position - HumanoidRootPart.Position).Magnitude
