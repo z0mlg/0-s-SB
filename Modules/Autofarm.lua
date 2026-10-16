@@ -323,6 +323,7 @@ end
 -- dodgescales.json. A zone made by skill X uses that skill's scale; anything
 -- else (telegraph tags, moving hitboxes, wave warnings) uses the global scale.
 DodgeSkillScales = {}
+DodgeSkillIgnored = {} -- per-attack ignore (Dodge tab toggle): skill makes no zones
 DodgeSeenSkills = {} -- skill names ReplicateSkill fired this session (attack list)
 local pendingSkill -- set while a skill's remote event is being dispatched
 local zoneScale = function(zone)
@@ -408,6 +409,7 @@ local tagSkill = function(tag)
 end
 
 local trackTelegraph = function(inst, low, skill)
+    if skill and DodgeSkillIgnored[skill] then return end -- ignored in the Dodge tab
     local life = inst.GetAttribute and inst:GetAttribute('Lifetime')
     local duration = (type(life) == 'number' and life or 4) + 2.5
     local zone
@@ -642,6 +644,8 @@ end
 
 local tagIsDangerous = function(tag)
     if IN_BETWEEN then return false end -- underground: no telegraph zones there
+    local sk = tagSkill(tag)
+    if sk and DodgeSkillIgnored[sk] then return false end
     for _, prefix in next, IGNORED_SKILL_TAGS do
         if string.sub(tag, 1, #prefix) == prefix then return false end
     end
@@ -916,6 +920,7 @@ task.spawn(function()
             DodgeSeenSkills[skillName] = true -- feeds the Dodge tab attack list
         end
         if bossSkillIgnored(enemy, skillName) then return end
+        if DodgeSkillIgnored[skillName] then return end -- ignored in the Dodge tab
         if not dodgeSkillAllowed(enemy, skillName) then return end
         DangerZones.LastSkillAt = tick()
         if type(skillName) ~= 'string' then return end
@@ -1918,6 +1923,28 @@ local saveDodgeScales = function()
     end)
 end
 
+-- per-attack ignore list, same deal: json array of skill names
+local DODGE_IGNORED_FILE = 'Bluu/Swordburst 2/dodgeignored.json'
+pcall(function()
+    if not (isfile and readfile) or not isfile(DODGE_IGNORED_FILE) then return end
+    local data = game:GetService('HttpService'):JSONDecode(readfile(DODGE_IGNORED_FILE))
+    if type(data) ~= 'table' then return end
+    for _, name in next, data do
+        if type(name) == 'string' then DodgeSkillIgnored[name] = true end
+    end
+end)
+
+local saveDodgeIgnored = function()
+    pcall(function()
+        if not writefile then return end
+        if not isfolder('Bluu') then makefolder('Bluu') end
+        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+        local list = {}
+        for name in next, DodgeSkillIgnored do table.insert(list, name) end
+        writefile(DODGE_IGNORED_FILE, game:GetService('HttpService'):JSONEncode(list))
+    end)
+end
+
 -- boss keyword -> its attacks (from the decompiled EnemySkills tree). A boss
 -- sitting in workspace.Mobs seeds the list with every attack it can throw.
 local DODGE_SKILL_CATALOG = {
@@ -1980,9 +2007,18 @@ local makeDodgeSection
 makeDodgeSection = function(name)
     if dodgeControls[name] then return end
     local key = 'DodgeScale_' .. string.gsub(name, '[^%w]', '_')
+    local ignoreKey = 'DodgeOn_' .. string.gsub(name, '[^%w]', '_')
     dodgeControls[name] = key
 
     DodgeBox:AddDivider({ Text = name })
+    DodgeBox:AddToggle(ignoreKey, {
+        Text = 'Dodge this attack',
+        Default = DodgeSkillIgnored[name] ~= true,
+        Tooltip = `Off: {name} casts produce no danger zones at all`,
+    }):OnChanged(function(value)
+        DodgeSkillIgnored[name] = not value or nil
+        saveDodgeIgnored()
+    end)
     DodgeBox:AddSlider(key, {
         Text = 'Zone size',
         Default = DodgeSkillScales[name] or dodgeScale(),
