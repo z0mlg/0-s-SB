@@ -638,6 +638,9 @@ end
 -- boss keep-lists and Dodge-tab ignores do the filtering. Lava floors still
 -- come via ReplicateWave, Bob and the soul light are positioning, not zones
 local tagIsDangerous = function(tag)
+    -- generic enemy hitbox tag: module-less bosses (Suspended Unborn etc.)
+    -- telegraph through it - 'Lifetime' attr is the fade-in fuse
+    if tag == 'EnemySkillHitbox' then return true end
     local sk = tagSkill(tag)
     if sk and DodgeSkillIgnored[sk] then return false end
     for _, prefix in next, IGNORED_SKILL_TAGS do
@@ -714,6 +717,16 @@ local hookSkillTags = function(skillName)
         end)
     end
 end
+
+-- EnemySkillHitbox has no skill-name prefix so hookSkillTags can't reach it -
+-- hook the tag directly; Suspended Unborn's whole kit telegraphs through it
+for _, inst in next, CollectionService:GetTagged('EnemySkillHitbox') do
+    trackTelegraph(inst)
+end
+CollectionService:GetInstanceAddedSignal('EnemySkillHitbox'):Connect(function(inst)
+    if getgenv().Bluu == false then return end
+    trackTelegraph(inst)
+end)
 
 local enemyRoot = function(enemy)
     return enemy and enemy:FindFirstChild('HumanoidRootPart')
@@ -792,20 +805,43 @@ local SkillZoneHandlers = {
     LeviathanSlam = { Initial = function(enemy, pos)
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 4) end
     end },
-    SinisterLaser = { Initial = function(enemy, pos)
-        if typeof(pos) ~= 'Vector3' then return end
-        local root = enemyRoot(enemy)
-        if root then
-            addSegmentZone(root.Position, pos, 8, 5)
-        else
-            addPointZone(pos, 14, 5)
+    -- Wendigo beam: Replicating carries the impact point the beam sweeps to
+    SinisterLaser = (function()
+        local beam = function(enemy, pos)
+            if typeof(pos) ~= 'Vector3' then return end
+            local root = enemyRoot(enemy)
+            if root then
+                addSegmentZone(root.Position, pos, 8, 5)
+            else
+                addPointZone(pos, 14, 5)
+            end
         end
-    end },
-    GasSmoke = { Initial = function(enemy, pos, radiusSize)
-        if typeof(pos) == 'Vector3' then
-            addPointZone(pos, (type(radiusSize) == 'number' and radiusSize or 10) * 3.5, 10)
-        end
-    end },
+        return { Replicating = beam, Initial = beam }
+    end)(),
+    -- Warlord gas: Replicating(SurfacePosition, RadiusSize), then CreateImpact
+    -- pulses grow the ring by RadiusSize every ~2s - grow our zone with it
+    GasSmoke = (function()
+        local smokes = setmetatable({}, { __mode = 'k' }) -- enemy -> { Zone, Step }
+        return {
+            Replicating = function(enemy, pos, radiusSize)
+                if typeof(pos) ~= 'Vector3' then return end
+                local r = type(radiusSize) == 'number' and radiusSize or 10
+                smokes[enemy] = { Step = r, Zone = addPointZone(pos, r * 2, 10) }
+            end,
+            Initial = function(enemy, pos, radiusSize)
+                if typeof(pos) ~= 'Vector3' then return end
+                local r = type(radiusSize) == 'number' and radiusSize or 10
+                smokes[enemy] = { Step = r, Zone = addPointZone(pos, r * 2, 10) }
+            end,
+            CreateImpact = function(enemy)
+                local s = enemy and smokes[enemy]
+                if s and s.Zone and s.Zone.Expires then
+                    s.Zone.R = s.Zone.R + s.Step
+                    s.Zone.Expires = tick() + 3
+                end
+            end,
+        }
+    end)(),
     -- The Between tempest wave: strike VFX lands at a CFrame; big attack -> low
     TempestStrike = { CreateStrike = function(enemy, cf)
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
