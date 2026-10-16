@@ -544,35 +544,36 @@ end
 -- Rubricatus' nuke kills anything with line-of-sight to its surface point;
 -- the only defense is standing behind a pillar. While a cover spot is armed
 -- every position resolve snaps to it until the blast window passes.
-BetweenNukeCover = nil -- { Pos = Vector3, Expires = tick }
+BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
-    if c and tick() < c.Expires then return c.Pos end
+    if not c then return end
+    -- pillar despawned = attack over; release immediately, back to farming
+    if c.Pillar and not c.Pillar.Parent then
+        BetweenNukeCover = nil
+        return
+    end
+    if tick() < c.Expires then return c.Pos end
 end
 
--- ring-scan from the nuke outward: a spot is cover when the ray from the nuke
--- to it gets blocked by geometry (pillar) before arriving - stand just past
--- whatever blocked it
-local findNukeCover = function(nukePos)
+-- the arena spawns 'Pillar' models for the nuke - standing inside one's
+-- geometry blocks the LOS kill check no matter where the blast lands. Take
+-- the closest pillar to us and hold its position until the window ends.
+local findNukeCover = function()
     if not HumanoidRootPart then return end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { Character, Mobs }
-    local origin = nukePos + Vector3.new(0, 4, 0)
-    for radius = 20, 260, 20 do
-        local best, bestDist
-        for i = 0, 23 do
-            local ang = i * math.pi * 2 / 24
-            local dir = Vector3.new(math.cos(ang) * radius, 0, math.sin(ang) * radius)
-            local hit = workspace:Raycast(origin, dir, params)
-            if hit then
-                local stand = hit.Position + dir.Unit * 3
-                local d = (stand - HumanoidRootPart.Position).Magnitude
-                if not bestDist or d < bestDist then best, bestDist = stand, d end
+    local best, bestDist, bestInst
+    for _, inst in next, workspace:GetChildren() do
+        if inst.Name == 'Pillar' and inst:IsA('PVInstance') then
+            local ok, cf = pcall(inst.GetPivot, inst)
+            if ok and cf then
+                local d = (cf.Position - HumanoidRootPart.Position).Magnitude
+                if not bestDist or d < bestDist then
+                    best, bestDist, bestInst = cf.Position, d, inst
+                end
             end
         end
-        if best then return best end -- closest blocked ring wins
     end
+    return best, bestInst
 end
 
 local resolveDodge = function(pos)
@@ -819,14 +820,30 @@ local SkillZoneHandlers = {
         local pos = typeof(cf) == 'CFrame' and cf.Position or cf
         if typeof(pos) == 'Vector3' then addPointZone(pos, 35, 5, true) end
     end },
-    -- Rubricatus nuke: Replicating delivers the surface position the nuke lands
-    -- on - take cover behind a pillar for the blast window instead of zoning
+    -- Rubricatus nuke: the arena spawns 'Pillar' models for it - teleport
+    -- inside the nearest one until the blast window ends, then farm resumes.
+    -- Pillars can lag the cast, so poll a few seconds before falling back.
     RubricatusNuke = {
         Replicating = function(enemy, pos)
             if typeof(pos) ~= 'Vector3' then return end
-            local cover = findNukeCover(pos)
-                or pos - Vector3.new(0, 250, 0) -- no pillar found: dive deep
-            BetweenNukeCover = { Pos = cover, Expires = tick() + 12 }
+            local cover, pillar = findNukeCover()
+            if cover then
+                BetweenNukeCover = { Pos = cover, Pillar = pillar, Expires = tick() + 12 }
+                return
+            end
+            task.spawn(function()
+                for _ = 1, 30 do -- ~6s for the pillars to spawn in
+                    local p, inst = findNukeCover()
+                    if p then
+                        BetweenNukeCover = { Pos = p, Pillar = inst, Expires = tick() + 12 }
+                        return
+                    end
+                    task.wait(0.2)
+                end
+                if not BetweenNukeCover then
+                    BetweenNukeCover = { Pos = pos - Vector3.new(0, 250, 0), Expires = tick() + 12 }
+                end
+            end)
         end,
         Trigger = function(enemy)
             local c = BetweenNukeCover
