@@ -118,7 +118,6 @@ PlayersBox:AddButton({ Text = "View player's stats", Func = function()
         end
 
         local stats = {
-            -- AnimPacks = 'no',
             Gamepasses = 'no',
             Skills = 'no'
         }
@@ -138,7 +137,6 @@ PlayersBox:AddButton({ Text = "View player's stats", Func = function()
 				.. `level {getLevel(profile.Stats.Exp.Value)},\n`
 				.. `has {profile.Stats.Vel.Value} vel,\n`
 				.. `floor {#profile.Locations:GetChildren() - 2},\n`
-				-- .. `{stats.AnimPacks} animation packs bought,\n`
 				.. `{stats.Gamepasses} gamepasses bought,\n`
 				.. `and {stats.Skills} special skills unlocked`,
 			10

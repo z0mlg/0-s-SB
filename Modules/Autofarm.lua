@@ -319,6 +319,17 @@ local dodgeScale = function()
     return (Options.DodgeScale and Options.DodgeScale.Value) or 2
 end
 
+-- per-attack size overrides, configured in the Dodge tab and saved to
+-- dodgescales.json. A zone made by skill X uses that skill's scale; anything
+-- else (telegraph tags, moving hitboxes, wave warnings) uses the global scale.
+DodgeSkillScales = {}
+DodgeSeenSkills = {} -- skill names ReplicateSkill fired this session (attack list)
+local pendingSkill -- set while a skill's remote event is being dispatched
+local zoneScale = function(zone)
+    local s = zone.Skill and DodgeSkillScales[zone.Skill]
+    return type(s) == 'number' and s or dodgeScale()
+end
+
 -- 'Low' zones are escaped by dropping under them instead of sidestepping -
 -- for the big attacks (lava sections, tempest strikes, wave-boss hits) where
 -- nothing can reach us below. Zones with a big footprint get marked Low
@@ -339,6 +350,7 @@ local zoneFootprint = function(zone)
 end
 
 local addZone = function(zone)
+    if zone.Skill == nil then zone.Skill = pendingSkill end
     if zone.Low == nil and zone.Kind ~= 'enemy' then
         zone.Low = zoneFootprint(zone) >= lowMinSize()
     end
@@ -386,7 +398,16 @@ local addPartZone = function(part, duration)
     return zone
 end
 
-local trackTelegraph = function(inst, low)
+-- 'LavaSmash Point' -> 'LavaSmash': the tag's skill for per-attack sizing
+local tagSkill = function(tag)
+    for _, suffix in next, ACTIVE_TAG_SUFFIXES do
+        if string.sub(tag, -#suffix) == suffix then
+            return string.sub(tag, 1, #tag - #suffix)
+        end
+    end
+end
+
+local trackTelegraph = function(inst, low, skill)
     local life = inst.GetAttribute and inst:GetAttribute('Lifetime')
     local duration = (type(life) == 'number' and life or 4) + 2.5
     local zone
@@ -401,12 +422,13 @@ local trackTelegraph = function(inst, low)
         end
     end
     if low and zone then zone.Low = true end
+    if skill and zone then zone.Skill = skill end
 end
 
 -- circle hit: returns escape point on XZ or nil
 local circleZoneHit = function(zone, x, z)
     local dx, dz = x - zone.X, z - zone.Z
-    local rr = zone.R * dodgeScale() + dodgePadding()
+    local rr = zone.R * zoneScale(zone) + dodgePadding()
     local d2 = dx * dx + dz * dz
     if d2 >= rr * rr then return end
     local d = math.sqrt(d2)
@@ -417,8 +439,9 @@ end
 
 -- oriented box hit in local space; whichever local axis is most vertical in the
 -- world gets ignored, so flat discs and tilted telegraphs work the same.
-local boxZoneHit = function(cf, size, elliptical, x, z)
-    local pad, scale = dodgePadding(), dodgeScale()
+local boxZoneHit = function(cf, size, elliptical, x, z, scale)
+    local pad = dodgePadding()
+    scale = scale or dodgeScale()
     local rel = cf:PointToObjectSpace(Vector3.new(x, cf.Position.Y, z))
     local ax, ay, az = math.abs(cf.XVector.Y), math.abs(cf.YVector.Y), math.abs(cf.ZVector.Y)
     local skip = (ax >= ay and ax >= az) and 1 or (ay >= az and 2 or 3)
@@ -456,11 +479,11 @@ end
 local zoneLowY = function(zone)
     local bottom
     if zone.Kind == 'point' then
-        bottom = zone.Y - (zone.R or 0) * dodgeScale()
+        bottom = zone.Y - (zone.R or 0) * zoneScale(zone)
     elseif zone.Kind == 'box' then
-        bottom = zone.CF.Position.Y - zone.Size.Y * 0.5 * dodgeScale()
+        bottom = zone.CF.Position.Y - zone.Size.Y * 0.5 * zoneScale(zone)
     elseif zone.LastCF and zone.LastSize then
-        bottom = zone.LastCF.Position.Y - zone.LastSize.Y * 0.5 * dodgeScale()
+        bottom = zone.LastCF.Position.Y - zone.LastSize.Y * 0.5 * zoneScale(zone)
     end
     return bottom and bottom - lowDepth() or nil
 end
@@ -474,7 +497,7 @@ local zoneHit = function(zone, x, z, now)
     if kind == 'point' then
         ex, ez = circleZoneHit(zone, x, z)
     elseif kind == 'box' then
-        ex, ez = boxZoneHit(zone.CF, zone.Size, zone.Elliptical, x, z)
+        ex, ez = boxZoneHit(zone.CF, zone.Size, zone.Elliptical, x, z, zoneScale(zone))
     elseif kind == 'enemy' then
         if not (zone.Enemy and zone.Enemy.Parent) then return 'dead' end
         local root = zone.Enemy:FindFirstChild('HumanoidRootPart')
@@ -500,9 +523,10 @@ local zoneHit = function(zone, x, z, now)
                 X = cf.Position.X,
                 Z = cf.Position.Z,
                 R = math.max(size.X, size.Y, size.Z) * 0.5,
+                Skill = zone.Skill,
             }, x, z)
         else
-            ex, ez = boxZoneHit(cf, size, shape == Enum.PartType.Cylinder, x, z)
+            ex, ez = boxZoneHit(cf, size, shape == Enum.PartType.Cylinder, x, z, zoneScale(zone))
         end
     end
 
@@ -645,7 +669,7 @@ workspace.DescendantAdded:Connect(function(inst)
         if ok and type(tags) == 'table' then
             for _, tag in next, tags do
                 if tagIsDangerous(tag) then
-                    trackTelegraph(inst, tagIsLow(tag))
+                    trackTelegraph(inst, tagIsLow(tag), tagSkill(tag))
                     return
                 end
             end
@@ -673,7 +697,7 @@ task.defer(function()
         if not (ok and type(tags) == 'table') then continue end
         for _, tag in next, tags do
             if tagIsDangerous(tag) then
-                trackTelegraph(inst, tagIsLow(tag))
+                trackTelegraph(inst, tagIsLow(tag), tagSkill(tag))
                 break
             end
         end
@@ -687,10 +711,10 @@ local hookSkillTags = function(skillName)
         DangerZones.HookedTags[tag] = true
         local low = tagIsLow(tag)
         for _, inst in next, CollectionService:GetTagged(tag) do
-            trackTelegraph(inst, low)
+            trackTelegraph(inst, low, skillName)
         end
         CollectionService:GetInstanceAddedSignal(tag):Connect(function(inst)
-            trackTelegraph(inst, low)
+            trackTelegraph(inst, low, skillName)
         end)
     end
 end
@@ -888,6 +912,9 @@ task.spawn(function()
 
     ReplicateSkill.OnClientEvent:Connect(function(enemy, phase, skillName, ...)
         if getgenv().Bluu == false then return end
+        if type(skillName) == 'string' then
+            DodgeSeenSkills[skillName] = true -- feeds the Dodge tab attack list
+        end
         if bossSkillIgnored(enemy, skillName) then return end
         if not dodgeSkillAllowed(enemy, skillName) then return end
         DangerZones.LastSkillAt = tick()
@@ -901,10 +928,14 @@ task.spawn(function()
             table.remove(args, 1)
         end
 
-        local handler = SkillZoneHandlers[skillName]
-        local fn = handler and handler[phaseKey]
-        if fn and pcall(fn, enemy, table.unpack(args)) then return end
-        genericSkillZones(enemy, args, skillIsBig(enemy, skillName))
+        -- zones spawned by this dispatch get stamped with the skill name so a
+        -- per-attack size override (Dodge tab) applies to all of them
+        pendingSkill = skillName
+        local fn = SkillZoneHandlers[skillName] and SkillZoneHandlers[skillName][phaseKey]
+        if not (fn and pcall(fn, enemy, table.unpack(args))) then
+            genericSkillZones(enemy, args, skillIsBig(enemy, skillName))
+        end
+        pendingSkill = nil
     end)
 end)
 
@@ -1264,7 +1295,7 @@ Autofarm:AddToggle('ShowDangerZones', { Text = 'Show danger zones' }):OnChanged(
             if zone.Expires and now > zone.Expires then continue end
             local cf, size
             if zone.Kind == 'point' or zone.Kind == 'enemy' then
-                local rr = zone.R * dodgeScale() + dodgePadding()
+                local rr = zone.R * zoneScale(zone) + dodgePadding()
                 local root = zone.Kind == 'enemy' and zone.Enemy and zone.Enemy:FindFirstChild('HumanoidRootPart')
                 if zone.Kind == 'enemy' and not root then continue end
                 cf = zone.Kind == 'point' and CFrame.new(zone.X, zone.Y or HumanoidRootPart.Position.Y, zone.Z)
@@ -1272,15 +1303,15 @@ Autofarm:AddToggle('ShowDangerZones', { Text = 'Show danger zones' }):OnChanged(
                 size = Vector3.new(rr * 2, 0.2, rr * 2)
             elseif zone.Kind == 'box' then
                 cf = zone.CF
-                size = zone.Size * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
+                size = zone.Size * zoneScale(zone) + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
             else
                 local part = zone.Part
                 if part and part:IsDescendantOf(workspace) then
                     cf = part.CFrame
-                    size = part.Size * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
+                    size = part.Size * zoneScale(zone) + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
                 elseif zone.LastCF then
                     cf = zone.LastCF
-                    size = zone.LastSize * dodgeScale() + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
+                    size = zone.LastSize * zoneScale(zone) + Vector3.new(dodgePadding() * 2, 0, dodgePadding() * 2)
                 end
             end
             if not cf then continue end
@@ -1857,3 +1888,190 @@ Players.PlayerRemoving:Connect(function()
     task.defer(refreshAssistPlayers)
 end)
 
+
+-- ===================== AUTO DODGE TAB =====================
+-- Per-attack zone sizes: every zone spawned by a skill's remote event (or its
+-- telegraph tags) carries the skill name, so a configured scale replaces the
+-- global 'Dodge scale' for that attack only. Saved instantly to
+-- dodgescales.json - shared across floors, accounts and reloads.
+
+DodgeTab = Window:AddTab('Dodge', 'shield')
+
+local DODGE_SCALES_FILE = 'Bluu/Swordburst 2/dodgescales.json'
+pcall(function() -- load saved per-attack scales
+    if not (isfile and readfile) or not isfile(DODGE_SCALES_FILE) then return end
+    local data = game:GetService('HttpService'):JSONDecode(readfile(DODGE_SCALES_FILE))
+    if type(data) ~= 'table' then return end
+    for name, scale in next, data do
+        if type(name) == 'string' and type(scale) == 'number' then
+            DodgeSkillScales[name] = scale
+        end
+    end
+end)
+
+local saveDodgeScales = function()
+    pcall(function()
+        if not writefile then return end
+        if not isfolder('Bluu') then makefolder('Bluu') end
+        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+        writefile(DODGE_SCALES_FILE, game:GetService('HttpService'):JSONEncode(DodgeSkillScales))
+    end)
+end
+
+-- boss keyword -> its attacks (from the decompiled EnemySkills tree). A boss
+-- sitting in workspace.Mobs seeds the list with every attack it can throw.
+local DODGE_SKILL_CATALOG = {
+    Atheon = { 'FireDash', 'LavaGyzer', 'LavaSmash' }, -- matches Corrupted Atheon
+    Aeganatos = { 'OceanGyzer', 'OmegaWave' },
+    Leviathan = { 'LeviathanRoar', 'LeviathanSlam' },
+    Warlord = { 'GasSmoke' },
+    Gorilla = { 'GorillaSlam', 'GorillaTornado' },
+    Krampus = { 'KrampusStomp' },
+    Kloff = { 'FrozenDestuction' },
+    Vyroth = { 'Frostflare' },
+    Dracula = { 'MagicStakes' },
+    ['Skeletal Mage'] = { 'ArcaneBlasts' },
+    ['Terror Incarnate'] = { 'CrimsonSmite', 'SummonEyes' },
+    ['Incarnātus'] = { 'NightmareBarrage', 'SummonMasks' },
+    Watcher = { 'EyeLaser' },
+    Wendigo = { 'SinisterLaser' },
+    Dementor = { 'ShadowBeam' },
+    Yato = { 'DeathRays' },
+    Guardian = { 'GuardianBalls', 'GuardianBeam', 'GuardianBox', 'GuardianCrystals' },
+    ['Pan Ku'] = { 'PanStorm' },
+    Aegor = { 'AegorSlam', 'AegorSpike' },
+    Nythrane = { 'PurpleFireyOrb' },
+    Rubricatus = { 'FallingStones', 'RedGroundSpikes', 'RedLightningDiscs',
+        'RedLightningLaser', 'RedLightningWave', 'RubricatusAttack',
+        'RubricatusLasers', 'RubricatusNuke', 'RubricatusSlam' },
+    Vaelith = { 'RiftDetonation' },
+}
+
+-- fixed places -> every attack that can show up there (ReplicatedStorage
+-- Database.Locations place ids + the EnemySkills tree)
+local DODGE_PLACE_SKILLS = {
+    [13965775911] = { 'FireDash', 'LavaGyzer', 'LavaSmash' }, -- Atheon arena
+    [6144637080] = { 'FireDash', 'LavaGyzer', 'LavaSmash', 'GasSmoke' }, -- Sector-235
+    [134019705603409] = { 'OceanGyzer', 'OmegaWave', 'LeviathanRoar', 'LeviathanSlam' }, -- Atlantis
+    [140451479334590] = { 'GuardianBalls', 'GuardianBeam', 'GuardianBox', 'GuardianCrystals', 'PanStorm' }, -- Eternal Domain
+    [15716179871] = { 'KrampusStomp', 'FrozenDestuction', 'Frostflare' }, -- Frosty Fields
+    [100233121448291] = { 'KrampusStomp', 'FrozenDestuction', 'Frostflare' }, -- Permafrost Purgatory
+    [11331145451] = { 'MagicStakes', 'ArcaneBlasts', 'CrimsonSmite', 'SummonEyes',
+        'NightmareBarrage', 'SummonMasks', 'EyeLaser', 'SinisterLaser' }, -- Spooky Hollow
+}
+local BETWEEN_SKILLS = { 'AegorSlam', 'AegorSpike', 'PurpleFireyOrb', 'FallingStones',
+    'RedGroundSpikes', 'RedLightningDiscs', 'RedLightningLaser', 'RedLightningWave',
+    'RubricatusAttack', 'RubricatusLasers', 'RubricatusNuke', 'RubricatusSlam',
+    'RiftDetonation', 'TempestStrike', 'FireyOrb' }
+if IN_BETWEEN or game.PlaceId == 121252145396212 then
+    DODGE_PLACE_SKILLS[game.PlaceId] = BETWEEN_SKILLS
+end
+
+local dodgeAttackList = {}
+local manualDodgeSkills = {} -- names added by hand via the input box
+local refreshDodgeAttacks
+refreshDodgeAttacks = function()
+    local set = {}
+    for name in next, DodgeSeenSkills do set[name] = true end -- seen live this session
+    for name in next, manualDodgeSkills do set[name] = true end
+    for _, name in next, DODGE_PLACE_SKILLS[game.PlaceId] or {} do set[name] = true end
+    for boss, skills in next, DODGE_SKILL_CATALOG do
+        for _, mob in next, Mobs:GetChildren() do
+            if string.find(mob.Name, boss, 1, true) then
+                for _, name in next, skills do set[name] = true end
+                break
+            end
+        end
+    end
+    for name in next, DodgeSkillScales do set[name] = true end -- overrides never hide
+    local selected = Options.DodgeAttack and Options.DodgeAttack.Value
+    if type(selected) == 'string' and selected ~= '' then set[selected] = true end
+
+    local list = {}
+    for name in next, set do table.insert(list, name) end
+    table.sort(list)
+    local same = #list == #dodgeAttackList
+    if same then
+        for i, name in next, list do
+            if dodgeAttackList[i] ~= name then same = false break end
+        end
+    end
+    if same then return end
+    dodgeAttackList = list
+    pcall(function() Options.DodgeAttack:SetValues(list) end)
+end
+
+local DodgeBox = DodgeTab:AddLeftGroupbox('Attack sizes', 'scaling')
+local DodgeListBox = DodgeTab:AddRightGroupbox('Configured', 'list')
+local suppressScaleWrite = false
+
+DodgeBox:AddDropdown('DodgeAttack', {
+    Text = 'Attack',
+    Values = {},
+    AllowNull = true,
+    Tooltip = 'Attacks on this floor: seen live, plus everything bosses here can cast'
+}):OnChanged(function(name)
+    if not name then return end
+    -- reflect the attack's saved scale without writing it back as an override
+    suppressScaleWrite = true
+    pcall(function()
+        Options.DodgeAttackScale:SetValue(DodgeSkillScales[name] or dodgeScale())
+    end)
+    suppressScaleWrite = false
+end)
+
+DodgeBox:AddInput('DodgeAttackName', {
+    Text = 'Or add attack by name',
+    Tooltip = 'Exact skill name (e.g. LavaSmash) - for attacks not seen yet',
+    Finished = true,
+    Placeholder = 'LavaSmash'
+}):OnChanged(function(name)
+    if type(name) ~= 'string' or name == '' then return end
+    manualDodgeSkills[name] = true
+    refreshDodgeAttacks()
+    Options.DodgeAttack:SetValue(name)
+end)
+
+DodgeBox:AddSlider('DodgeAttackScale', {
+    Text = 'Zone size',
+    Default = 2,
+    Min = 0.5,
+    Max = 10,
+    Rounding = 1,
+    Suffix = 'x',
+    Compact = true,
+    Tooltip = 'Replaces the global dodge scale for the selected attack - saved instantly'
+}):OnChanged(function(value)
+    if suppressScaleWrite then return end
+    local name = Options.DodgeAttack and Options.DodgeAttack.Value
+    if type(name) ~= 'string' or name == '' then return end
+    DodgeSkillScales[name] = value
+    saveDodgeScales()
+end)
+
+DodgeBox:AddButton('Use global size for attack', function()
+    local name = Options.DodgeAttack and Options.DodgeAttack.Value
+    if type(name) ~= 'string' or name == '' then
+        Library:Notify('Pick an attack first', 3)
+        return
+    end
+    DodgeSkillScales[name] = nil
+    saveDodgeScales()
+    Options.DodgeAttackScale:SetValue(dodgeScale())
+end)
+
+local dodgeCfgLabel = DodgeListBox:AddLabel('')
+task.spawn(function()
+    while getgenv().Bluu ~= false do
+        refreshDodgeAttacks()
+        local lines = {}
+        for name, scale in next, DodgeSkillScales do
+            table.insert(lines, `{name} = {scale}x`)
+        end
+        table.sort(lines)
+        pcall(function()
+            dodgeCfgLabel:SetText(#lines > 0 and table.concat(lines, '\n') or 'No per-attack sizes yet')
+        end)
+        task.wait(2)
+    end
+end)
