@@ -600,32 +600,45 @@ GuiService = GuiService or game:GetService('GuiService')
 local VirtualInputManager = game:GetService('VirtualInputManager')
 
 local findBlockModal = function()
+    -- current client: React modal mounted at CoreGui.RobloxGui.BlockingContainer
+    local robloxGui = CoreGui:FindFirstChild('RobloxGui')
+    local container = robloxGui and robloxGui:FindFirstChild('BlockingContainer')
+    if container then return container end
     local overlay = CoreGui:FindFirstChild('FoundationOverlay')
     if overlay then
         local modal = overlay:FindFirstChild('BlockingModalScreen', true)
         if modal and not modal:IsA('ModuleScript') then return modal end
     end
     for _, descendant in ipairs(CoreGui:GetDescendants()) do
-        if descendant.Name == 'BlockingModalScreen' and not descendant:IsA('ModuleScript') then
+        if (descendant.Name == 'BlockingModalScreen' or descendant.Name == 'BlockingContainer')
+            and not descendant:IsA('ModuleScript') then
             return descendant
         end
     end
 end
 
 local findBlockButton = function(modal)
-    for _, label in ipairs(modal:GetDescendants()) do
-        if label:IsA('TextLabel') and label.Text == 'Block' then
-            local parent = label.Parent
-            while parent and parent ~= modal do
-                if parent:IsA('GuiButton') then return parent end
-                parent = parent.Parent
+    -- the ActionModal stack is Cancel / BlockAndReport / Block: prefer the
+    -- exact 'Block' label, fall back to 'Block and Report' (still blocks).
+    -- 'Unblock'/'Cancel' are never matched, so we can't undo a block.
+    local secondary
+    for _, button in ipairs(modal:GetDescendants()) do
+        if button:IsA('GuiButton') then
+            local ownText = (button:IsA('TextButton') or button:IsA('ImageButton'))
+                and button.Text or nil
+            if ownText == 'Block' then return button end
+            if ownText == 'Block and Report' then secondary = secondary or button end
+            for _, label in ipairs(button:GetDescendants()) do
+                if label:IsA('TextLabel') or label:IsA('TextButton') then
+                    if label.Text == 'Block' then return button end
+                    if label.Text == 'Block and Report' then
+                        secondary = secondary or button
+                    end
+                end
             end
         end
     end
-    -- Footer stack order: Cancel = 1, BlockAndReport = 2, Block = 3
-    local footer = modal:FindFirstChild('Footer', true)
-    local buttons = footer and footer:FindFirstChild('Buttons', true)
-    return buttons and buttons:FindFirstChild('3')
+    return secondary
 end
 
 local clickBlockButton = function(button)
