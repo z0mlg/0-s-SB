@@ -2001,8 +2001,9 @@ local manualDodgeSkills = {} -- names added by hand via the input box
 local dodgeControls = {} -- attack name -> slider option id (section exists)
 local suppressScaleWrite = false
 
--- one section per attack: divider with its name, its own size slider, and a
--- reset back to the global scale. Created on demand as attacks get discovered.
+-- one groupbox per attack, alternating columns so the tab stays balanced.
+-- Created on demand as attacks get discovered.
+local dodgeColumnRight = false
 local makeDodgeSection
 makeDodgeSection = function(name)
     if dodgeControls[name] then return end
@@ -2010,8 +2011,9 @@ makeDodgeSection = function(name)
     local ignoreKey = 'DodgeOn_' .. string.gsub(name, '[^%w]', '_')
     dodgeControls[name] = key
 
-    DodgeBox:AddDivider({ Text = name })
-    DodgeBox:AddToggle(ignoreKey, {
+    local box = dodgeColumnRight and DodgeTab:AddRightGroupbox(name) or DodgeTab:AddLeftGroupbox(name)
+    dodgeColumnRight = not dodgeColumnRight
+    box:AddToggle(ignoreKey, {
         Text = 'Dodge this attack',
         Default = DodgeSkillIgnored[name] ~= true,
         Tooltip = `Off: {name} casts produce no danger zones at all`,
@@ -2019,7 +2021,7 @@ makeDodgeSection = function(name)
         DodgeSkillIgnored[name] = not value or nil
         saveDodgeIgnored()
     end)
-    DodgeBox:AddSlider(key, {
+    box:AddSlider(key, {
         Text = 'Zone size',
         Default = DodgeSkillScales[name] or dodgeScale(),
         Min = 0.5,
@@ -2033,8 +2035,8 @@ makeDodgeSection = function(name)
         DodgeSkillScales[name] = value
         saveDodgeScales()
     end)
-    DodgeBox:AddButton({
-        Text = `Use global size ({name})`,
+    box:AddButton({
+        Text = 'Use global size',
         Func = function()
             DodgeSkillScales[name] = nil
             saveDodgeScales()
