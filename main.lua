@@ -638,6 +638,18 @@ local findBlockButton = function(modal)
             end
         end
     end
+    -- positional fallback: Footer stack order Cancel = 1, BlockAndReport = 2,
+    -- Block = 3 - if '3' isn't the button itself, grab the GuiButton inside it
+    local footer = modal:FindFirstChild('Footer', true)
+    local buttons = footer and footer:FindFirstChild('Buttons', true)
+    local third = buttons and buttons:FindFirstChild('3')
+    if third then
+        if third:IsA('GuiButton') then return third end
+        for _, d in ipairs(third:GetDescendants()) do
+            if d:IsA('GuiButton') then return d end
+        end
+        return third -- last resort: at least the mouse-click path gets a position
+    end
     return secondary
 end
 
@@ -711,29 +723,31 @@ end
 
 blockPlayer = function(player)
     -- retries until the block is verified; stops if the target leaves.
-    -- BlockingUtility path is headless (what the menu calls on confirm);
-    -- modal+click is only a fallback when the package can't be required.
+    -- BlockPlayerAsync RAISES the same confirm prompt the escape menu shows
+    -- (and can yield on it, hence task.spawn) - so whichever path fires, we
+    -- then hunt the modal and press Block via SelectedCoreObject + Enter.
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
-        local prompted = false
         if BlockingUtility then
-            pcall(function() BlockingUtility:BlockPlayerAsync(player) end)
-            prompted = true
+            task.spawn(function()
+                pcall(BlockingUtility.BlockPlayerAsync, BlockingUtility, player)
+            end)
         else
             StarterGui:SetCore('PromptBlockPlayer', player)
-            local modal
-            for _ = 1, 40 do
-                modal = findBlockModal()
-                if modal then break end
-                task.wait(0.05)
-            end
-            if modal then
-                local button = findBlockButton(modal)
-                if button then
-                    clickBlockButton(button)
-                    prompted = true
-                end
+        end
+
+        local modal
+        for _ = 1, 40 do
+            if isPlayerBlocked(player) then return true end -- headless landed, skip the hunt
+            modal = findBlockModal()
+            if modal then break end
+            task.wait(0.05)
+        end
+        if modal then
+            local button = findBlockButton(modal)
+            if button then
+                clickBlockButton(button)
             end
         end
 
@@ -741,7 +755,6 @@ blockPlayer = function(player)
             task.wait(0.1)
             if isPlayerBlocked(player) then return true end
         end
-        if not prompted then task.wait(0.5) end -- nothing fired: back off a bit
     end
     return true -- target left: nothing left to block
 end
