@@ -556,12 +556,13 @@ local nukeCoverPoint = function()
     if tick() < c.Expires then return c.Pos end
 end
 
--- the arena spawns 'Pillar' models for the nuke - standing inside one's
--- geometry blocks the LOS kill check no matter where the blast lands. Take
--- the closest pillar to us and hold its position until the window ends.
-local findNukeCover = function()
-    if not HumanoidRootPart then return end
-    local best, bestDist, bestInst
+-- the arena spawns 'Pillar' models for the nuke - the kill check is line-of-
+-- sight from the blast point, so the safe spot is the FAR SIDE of a pillar
+-- along the nuke->pillar axis (its shadow). Take the closest pillar to us and
+-- hold the point just past its far face until the window ends.
+local findNukeCover = function(nukePos)
+    if not (HumanoidRootPart and nukePos) then return end
+    local bestInst, bestDist
     for _, inst in next, workspace:GetChildren() do
         -- boss-spawned cover pillars are Models; the map's static 'Pillar'
         -- MeshParts are decoration and don't block the nuke - skip those
@@ -569,13 +570,20 @@ local findNukeCover = function()
             local ok, cf = pcall(inst.GetPivot, inst)
             if ok and cf then
                 local d = (cf.Position - HumanoidRootPart.Position).Magnitude
-                if not bestDist or d < bestDist then
-                    best, bestDist, bestInst = cf.Position, d, inst
-                end
+                if not bestDist or d < bestDist then bestDist, bestInst = d, inst end
             end
         end
     end
-    return best, bestInst
+    if not bestInst then return end
+    local pivot = bestInst:GetPivot()
+    local ok, ext = pcall(bestInst.GetExtentsSize, bestInst)
+    local margin = ok and (math.max(ext.X, ext.Z) / 2 + 2) or 8
+    local flat = Vector3.new(pivot.X - nukePos.X, 0, pivot.Z - nukePos.Z)
+    if flat.Magnitude < 0.01 then return pivot.Position, bestInst end
+    -- stand at the pillar's base height on its far side
+    local baseY = ok and (pivot.Y - ext.Y / 2 + 3) or pivot.Y
+    local behind = pivot.Position + flat.Unit * margin
+    return Vector3.new(behind.X, baseY, behind.Z), bestInst
 end
 
 local resolveDodge = function(pos)
@@ -872,14 +880,14 @@ local SkillZoneHandlers = {
                     task.wait(0.2)
                 end
             end)
-            local cover, pillar = findNukeCover()
+            local cover, pillar = findNukeCover(pos)
             if cover then
                 BetweenNukeCover = { Pos = cover, Pillar = pillar, Expires = tick() + 12 }
                 return
             end
             task.spawn(function()
                 for _ = 1, 30 do -- ~6s for the pillars to spawn in
-                    local p, inst = findNukeCover()
+                    local p, inst = findNukeCover(pos)
                     if p then
                         BetweenNukeCover = { Pos = p, Pillar = inst, Expires = tick() + 12 }
                         return
