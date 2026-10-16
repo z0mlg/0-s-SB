@@ -688,9 +688,10 @@ isPlayerBlocked = function(player)
         local ok, blocked = pcall(function()
             return BlockingUtility:IsPlayerBlockedByUserId(player.UserId)
         end)
-        if ok then return blocked == true end
+        if ok and blocked == true then return true end
     end
-    -- legacy fallback (returns a JSON string on old clients, [] on new ones)
+    -- GetCore('GetBlockedUserIds') as a second source - either one reporting
+    -- the id counts as blocked (returns a JSON string on some clients)
     local ok, blocked = pcall(function()
         return StarterGui:GetCore('GetBlockedUserIds')
     end)
@@ -769,54 +770,62 @@ local isGateExempt = function(player)
 end
 
 local lastGateTeleport
-local joinGateBlockAndHop = function()
-    -- if modules/autoload already spun automation up, kill it before blocking
-    -- (same suspicious-toggle list as the panic sweep: attacks + movement)
+local gateBusy = false
+local joinGateBlockAndHop
+joinGateBlockAndHop = function()
+    if gateBusy then return end -- a second joiner mid-verify rides the same hop
+    gateBusy = true
+
+    -- panic, same playbook as the Misc tab player-panic: sweep every
+    -- suspicious toggle, respawn so we land at spawn, keep autoswing on so
+    -- we just look AFK while the blocks verify
     if Toggles then
         for _, name in next, {
             'Autofarm', 'Killaura', 'KillauraSwing', 'UseSkillPreemptively',
             'AttackPlayers', 'SendTrades', 'EnablePathFarming', 'Autowalk',
             'Pathfind', 'Fly', 'Noclip', 'ClickTeleport', 'DodgeAttacks',
             'ReturnOnDeath', 'ResetOnLowStamina', 'AutoJoinNewFloor',
-            'GoToPlayer', 'EmergencyEscape',
+            'EscapeOnLowHealth', 'GoToPlayer', 'EmergencyEscape',
         } do
             local t = Toggles[name]
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
-    -- panic-style while the block goes through: we already killed the
-    -- suspicious toggles above; now respawn to spawn and keep autoswing on so
-    -- we just look like an idle player, not a farmer
+    pcall(toggleLerp)
+    pcall(enableLinearVelocity, false)
     if Humanoid and Humanoid.Health > 0 then
         pcall(function() Humanoid.Health = 0 end)
-        task.delay(2, function()
-            if Toggles and Toggles.Autoswing and not Toggles.Autoswing.Value then
-                pcall(function() Toggles.Autoswing:SetValue(true) end)
-            end
-        end)
+    end
+    task.delay(2, function()
+        if Toggles and Toggles.Autoswing and not Toggles.Autoswing.Value then
+            pcall(function() Toggles.Autoswing:SetValue(true) end)
+        end
+    end)
+
+    -- block at most 2 of them: blockPlayer keeps re-prompting in the
+    -- background until the id lands on the blocklist (or they leave)
+    local targets = {}
+    for _, p in next, Players:GetPlayers() do
+        if #targets >= 2 then break end
+        if not isGateExempt(p) then
+            table.insert(targets, p)
+            task.spawn(blockPlayer, p)
+        end
     end
 
-    -- block at most 2 of them and WAIT for the blocks to verify server-side -
-    -- we only leave once they're actually on the blocklist (cap 8s so a stuck
-    -- modal can't hold us in the server forever)
-    local pending = {}
-    for _, p in next, Players:GetPlayers() do
-        if #pending >= 2 then break end
-        if not isGateExempt(p) then
-            table.insert(pending, p)
-        end
-    end
-    for _, p in next, pending do
-        task.spawn(blockPlayer, p)
-    end
-    local deadline = tick() + 8
-    while #pending > 0 and tick() < deadline do
-        for i = #pending, 1, -1 do
-            local p = pending[i]
-            if not p.Parent or isPlayerBlocked(p) then
-                table.remove(pending, i)
+    -- separate fast verify loop: polls the blocklist every 0.1s and the
+    -- SECOND every target is confirmed blocked (or left) we hop. No hop
+    -- while anyone unblocked is still in the server - we wait at spawn
+    -- swinging instead, which is the panic look anyway
+    while true do
+        local allClear = true
+        for _, p in next, targets do
+            if p.Parent and not isPlayerBlocked(p) then
+                allClear = false
+                break
             end
         end
+        if allClear then break end
         task.wait(0.1)
     end
     pcall(function()
@@ -836,6 +845,18 @@ local joinGateBlockAndHop = function()
         lastGateTeleport = tick()
         game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
     end)
+    gateBusy = false
+
+    -- if the teleport failed (or someone new joined during verify) and the
+    -- toggle is still on with people still here, run it again
+    if Toggles and Toggles.RestartServer and Toggles.RestartServer.Value then
+        for _, p in next, Players:GetPlayers() do
+            if not isGateExempt(p) then
+                task.delay(2, joinGateBlockAndHop)
+                return
+            end
+        end
+    end
 end
 
 if joinGateArmed then
