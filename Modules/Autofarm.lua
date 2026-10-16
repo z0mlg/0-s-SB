@@ -851,10 +851,27 @@ local SkillZoneHandlers = {
     end },
     -- Rubricatus nuke: the arena spawns 'Pillar' models for it - teleport
     -- inside the nearest one until the blast window ends, then farm resumes.
-    -- Pillars can lag the cast, so poll a few seconds before falling back.
+    -- The server drives the hide timer itself through the 'WaveCountdown'
+    -- workspace attribute (the game's on-screen countdown): while it's set we
+    -- extend cover, the moment it clears the nuke has gone off. Pillar despawn
+    -- and the 12s cap stay as fallbacks if the countdown never appears.
     RubricatusNuke = {
         Replicating = function(enemy, pos)
             if typeof(pos) ~= 'Vector3' then return end
+            task.spawn(function()
+                local sawCountdown
+                for _ = 1, 100 do -- ~20s cap
+                    if workspace:GetAttribute('WaveCountdown') ~= nil then
+                        sawCountdown = true
+                        local c = BetweenNukeCover
+                        if c then c.Expires = math.max(c.Expires, tick() + 1) end
+                    elseif sawCountdown then
+                        BetweenNukeCover = nil -- countdown cleared = detonated
+                        return
+                    end
+                    task.wait(0.2)
+                end
+            end)
             local cover, pillar = findNukeCover()
             if cover then
                 BetweenNukeCover = { Pos = cover, Pillar = pillar, Expires = tick() + 12 }
