@@ -539,6 +539,8 @@ local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
 local NukeArmAt = 0
 local nukeThreatPos -- forward: used by nukeCoverPoint, defined below
+local nukeRayParams = RaycastParams.new()
+nukeRayParams.FilterType = Enum.RaycastFilterType.Exclude
 
 -- the far-side spot of one pillar along the threat->pillar axis - recomputed
 -- live because spawned pillars tween up from underground and move
@@ -549,11 +551,17 @@ local pillarBehind = function(inst, threat)
     local ok2, ext = pcall(inst.GetExtentsSize, inst)
     local margin = ok2 and (math.max(ext.X, ext.Z) / 2 + 2) or 8
     local flat = Vector3.new(cf.X - threat.X, 0, cf.Z - threat.Z)
-    if flat.Magnitude < 0.01 then return cf.Position end
-    local behind = cf.Position + flat.Unit * margin
+    local behind = flat.Magnitude < 0.01 and cf.Position or (cf.Position + flat.Unit * margin)
+    -- floor level at the spot, not our own Y - autofarm hovers under the mob,
+    -- so our Y is deep below the arena when the nuke starts. Raycast down from
+    -- near the boss's level, excluding us and the pillar itself (its top face
+    -- would win the ray while it tweens up through the floor)
+    nukeRayParams.FilterDescendantsInstances = {Char, pillar}
+    local origin = Vector3.new(behind.X, threat.Y + 80, behind.Z)
+    local hit = workspace:Raycast(origin, Vector3.new(0, -400, 0), nukeRayParams)
     local r = HumanoidRootPart
-    -- keep our own Y: the shadow is X/Z-only
-    return Vector3.new(behind.X, r and r.Position.Y or behind.Y, behind.Z)
+    local y = hit and (hit.Position.Y + 3) or (r and r.Position.Y or behind.Y)
+    return Vector3.new(behind.X, y, behind.Z)
 end
 
 local nukeCoverPoint = function()
