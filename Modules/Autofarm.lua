@@ -534,17 +534,16 @@ end
 -- spawn during a live-Rubricatus wave arms the window, and it stays up while
 -- the server's WaveCountdown hides you / until it goes stale. Between casts
 -- we farm normally again.
-BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick, FloorY = num }
+BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
 local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
 local NukeArmAt = 0
 local nukeThreatPos -- forward: used by nukeCoverPoint, defined below
-local nukeRayParams = RaycastParams.new()
-nukeRayParams.FilterType = Enum.RaycastFilterType.Exclude
+local NUKE_FLOOR_Y = 31 -- the Between arena floor is flat and fixed
 
 -- the far-side spot of one pillar along the threat->pillar axis - recomputed
 -- live because spawned pillars tween up from underground and move
-local pillarBehind = function(inst, threat, floorY)
+local pillarBehind = function(inst, threat)
     local ok, cf = pcall(inst.GetPivot, inst)
     if not (ok and cf) then return end
     threat = threat or cf.Position
@@ -552,19 +551,7 @@ local pillarBehind = function(inst, threat, floorY)
     local margin = ok2 and (math.max(ext.X, ext.Z) / 2 + 2) or 8
     local flat = Vector3.new(cf.X - threat.X, 0, cf.Z - threat.Z)
     local behind = flat.Magnitude < 0.01 and cf.Position or (cf.Position + flat.Unit * margin)
-    local y = floorY
-    if not y then
-        -- floor level at the spot, not our own Y - autofarm hovers under the
-        -- mob, so our Y is deep below the arena when the nuke starts. Raycast
-        -- down from near the boss's level, excluding us and the pillar itself
-        -- (its top face would win the ray while it tweens up through the floor)
-        nukeRayParams.FilterDescendantsInstances = {Char, inst}
-        local origin = Vector3.new(behind.X, threat.Y + 80, behind.Z)
-        local hit = workspace:Raycast(origin, Vector3.new(0, -400, 0), nukeRayParams)
-        local r = HumanoidRootPart
-        y = hit and (hit.Position.Y + 3) or (r and r.Position.Y or behind.Y)
-    end
-    return Vector3.new(behind.X, y, behind.Z), y
+    return Vector3.new(behind.X, NUKE_FLOOR_Y, behind.Z)
 end
 
 local nukeCoverPoint = function()
@@ -573,11 +560,8 @@ local nukeCoverPoint = function()
     if tick() >= c.Expires then return end
     -- follow the tracked pillar's live pivot - it may still be rising
     if c.Pillar and c.Pillar.Parent then
-        local b, y = pillarBehind(c.Pillar, nukeThreatPos(), c.FloorY)
-        if b then
-            c.FloorY = c.FloorY or y -- raycast once: the floor doesn't move
-            return b
-        end
+        local b = pillarBehind(c.Pillar, nukeThreatPos())
+        if b then return b end
     end
     return c.Pos
 end
@@ -601,7 +585,7 @@ nukeThreatPos = function()
     return root and root.Position
 end
 
-local findNukeCover = function(threat, floorY)
+local findNukeCover = function(threat)
     if not HumanoidRootPart then return end
     local bestInst, bestDist
     for _, inst in next, workspace:GetDescendants() do
@@ -615,8 +599,7 @@ local findNukeCover = function(threat, floorY)
         end
     end
     if not bestInst then return end
-    local pos, fy = pillarBehind(bestInst, threat, floorY)
-    return pos, bestInst, fy
+    return pillarBehind(bestInst, threat), bestInst
 end
 
 -- the game's own alert: WaveDefense.Countdown.Note reads 'HIDE BEHIND A
@@ -659,7 +642,7 @@ armNukeWatch = function()
             elseif now - NukeArmAt > 14 then
                 ended = true -- window stale
             end
-            local p, inst, fy = findNukeCover(nukeThreatPos(), BetweenNukeCover and BetweenNukeCover.FloorY)
+            local p, inst = findNukeCover(nukeThreatPos())
             if not p then ended = true end -- zero pillars = nothing left to hide
             if ended then
                 if not tailAt then tailAt = now + 2 end
@@ -671,7 +654,6 @@ armNukeWatch = function()
                 if not BetweenNukeCover then BetweenNukeCover = {} end
                 BetweenNukeCover.Pos = p
                 BetweenNukeCover.Pillar = inst
-                BetweenNukeCover.FloorY = BetweenNukeCover.FloorY or fy
             end
             if BetweenNukeCover then BetweenNukeCover.Expires = now + 3 end
             task.wait(0.15)
