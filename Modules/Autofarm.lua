@@ -538,11 +538,34 @@ BetweenNukeCover = nil -- { Pos = Vector3, Pillar = inst, Expires = tick }
 local nukeWatchRunning = false
 local NukeBlastPos, NukeBlastAt
 local NukeArmAt = 0
+local nukeThreatPos -- forward: used by nukeCoverPoint, defined below
+
+-- the far-side spot of one pillar along the threat->pillar axis - recomputed
+-- live because spawned pillars tween up from underground and move
+local pillarBehind = function(inst, threat)
+    local ok, cf = pcall(inst.GetPivot, inst)
+    if not (ok and cf) then return end
+    threat = threat or cf.Position
+    local ok2, ext = pcall(inst.GetExtentsSize, inst)
+    local margin = ok2 and (math.max(ext.X, ext.Z) / 2 + 2) or 8
+    local flat = Vector3.new(cf.X - threat.X, 0, cf.Z - threat.Z)
+    if flat.Magnitude < 0.01 then return cf.Position end
+    local behind = cf.Position + flat.Unit * margin
+    local r = HumanoidRootPart
+    -- keep our own Y: the shadow is X/Z-only
+    return Vector3.new(behind.X, r and r.Position.Y or behind.Y, behind.Z)
+end
 
 local nukeCoverPoint = function()
     local c = BetweenNukeCover
     if not c then return end
-    if tick() < c.Expires then return c.Pos end
+    if tick() >= c.Expires then return end
+    -- follow the tracked pillar's live pivot - it may still be rising
+    if c.Pillar and c.Pillar.Parent then
+        local b = pillarBehind(c.Pillar, nukeThreatPos())
+        if b then return b end
+    end
+    return c.Pos
 end
 
 local rubricatusAlive = function()
@@ -556,7 +579,7 @@ end
 
 -- shadow direction: fresh blast point from the remote, else the boss's root,
 -- else (inside findNukeCover) the pillar cluster centroid
-local nukeThreatPos = function()
+nukeThreatPos = function()
     if NukeBlastPos and NukeBlastAt and tick() - NukeBlastAt < 25 then
         return NukeBlastPos
     end
@@ -566,31 +589,19 @@ end
 
 local findNukeCover = function(threat)
     if not HumanoidRootPart then return end
-    local bestInst, bestPivot, bestDist
-    local cx, cz, n = 0, 0, 0
+    local bestInst, bestDist
     for _, inst in next, workspace:GetDescendants() do
         -- boss cover pillars are Models; map 'Pillar' MeshParts are decor
         if inst:IsA('Model') and inst.Name:find('Pillar', 1, true) then
             local ok, cf = pcall(inst.GetPivot, inst)
             if ok and cf then
-                cx, cz, n = cx + cf.X, cz + cf.Z, n + 1
                 local d = (cf.Position - HumanoidRootPart.Position).Magnitude
-                if not bestDist or d < bestDist then
-                    bestDist, bestInst, bestPivot = d, inst, cf
-                end
+                if not bestDist or d < bestDist then bestDist, bestInst = d, inst end
             end
         end
     end
     if not bestInst then return end
-    threat = threat or Vector3.new(cx / n, bestPivot.Y, cz / n)
-    local ok, ext = pcall(bestInst.GetExtentsSize, bestInst)
-    local margin = ok and (math.max(ext.X, ext.Z) / 2 + 2) or 8
-    local flat = Vector3.new(bestPivot.X - threat.X, 0, bestPivot.Z - threat.Z)
-    if flat.Magnitude < 0.01 then return bestPivot.Position, bestInst end
-    -- keep our own Y: the shadow is X/Z-only and the pillar's bounding box
-    -- can extend under the floor, which would sink us below the arena
-    local behind = bestPivot.Position + flat.Unit * margin
-    return Vector3.new(behind.X, HumanoidRootPart.Position.Y, behind.Z), bestInst
+    return pillarBehind(bestInst, threat), bestInst
 end
 
 -- the game's own alert: WaveDefense.Countdown.Note reads 'HIDE BEHIND A
