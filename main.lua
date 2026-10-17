@@ -60,9 +60,38 @@ if queue_on_teleport and OML_SCRIPT_URL ~= '' and not autoexecOff then
     queue_on_teleport(`getgenv().BluuQueued = true; loadstring(game:HttpGet('{OML_SCRIPT_URL}'))()`)
 end
 
-if game.PlaceId == OML_RELOAD_PLACE then -- Main menu: log in to bounce back to our floor
-    print('[Bluu] Hub world - logging in to return to the floor')
+if game.PlaceId == OML_RELOAD_PLACE then -- Arcadia 'hub' - a transit stop, not a place to farm
+    print('[Bluu] Hub world - logging in, then returning to the saved floor')
     Function:InvokeServer('Login')
+    -- modules never load here (return below), so the resume has to happen
+    -- right in this block: read whichever config armed the bounce and keep
+    -- invoking the floor teleport until we leave - a dropped invoke used to
+    -- strand us on Floor 1 forever
+    task.spawn(function()
+        task.wait(2)
+        local cfg
+        pcall(function()
+            for _, file in next, { 'Bluu/Swordburst 2/serverswitch', 'Bluu/Swordburst 2/emptyserver' } do
+                if isfile and isfile(file) then
+                    local c = game:GetService('HttpService'):JSONDecode(readfile(file))
+                    if c and c.active and c.targetPlace and c.targetPlace ~= OML_RELOAD_PLACE then
+                        cfg = c
+                        break
+                    elseif c and c.targetPlace == OML_RELOAD_PLACE and delfile then
+                        delfile(file) -- poisoned by an old hub write - dead config
+                    end
+                end
+            end
+        end)
+        if not cfg then return end -- manual hub visit - nothing saved to resume
+        print('[Bluu] Resuming floor:', cfg.targetPlace)
+        while game.PlaceId == OML_RELOAD_PLACE do
+            pcall(function()
+                Function:InvokeServer('Teleport', { 'Teleport', cfg.targetPlace })
+            end)
+            task.wait(4)
+        end
+    end)
     return
 end
 
@@ -785,11 +814,18 @@ local joinGateBlockAndHop = function()
         if writefile and isfolder and HumanoidRootPart then
             if not isfolder('Bluu') then makefolder('Bluu') end
             if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+            -- keep the ORIGINAL saved spot: every hop lands us at spawn, and
+            -- overwriting with our current pos would erase the farm position
             local pos = HumanoidRootPart.Position
+            local saved
+            if isfile('Bluu/Swordburst 2/serverswitch') then
+                local prev = game:GetService('HttpService'):JSONDecode(readfile('Bluu/Swordburst 2/serverswitch'))
+                if prev and prev.position then saved = prev.position end
+            end
             writefile('Bluu/Swordburst 2/serverswitch', game:GetService('HttpService'):JSONEncode({
                 active = true,
                 targetPlace = game.PlaceId,
-                position = { x = pos.X, y = pos.Y, z = pos.Z },
+                position = saved or { x = pos.X, y = pos.Y, z = pos.Z },
             }))
         end
     end)
