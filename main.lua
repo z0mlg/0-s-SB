@@ -797,17 +797,18 @@ local joinGateBlockAndHop = function()
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
-    -- block at most 2 of them, then HOLD until GetBlockedUserIds confirms
-    -- every one of them - leaving before the block lands defeats the point
+    -- block 1 of them, then HOLD until GetBlockedUserIds confirms it -
+    -- leaving before the block lands defeats the point
     local targets = {}
     for _, p in next, Players:GetPlayers() do
-        if #targets >= 2 then break end
+        if #targets >= 1 then break end
         if not isGateExempt(p) then
             table.insert(targets, p)
         end
     end
     for _, p in next, targets do
-        task.spawn(blockPlayer, p)
+        blockPlayer(p)
+        task.wait(10) -- spacing between block calls
     end
     waitAllBlocked(targets, 15)
     pcall(function()

@@ -229,7 +229,7 @@ local function startEmptyServerFinder(resuming, serversChecked)
                 break
             end
             
-            local playersToBlock = math.min(2, currentPlayers)
+            local playersToBlock = math.min(1, currentPlayers)
             local playersList = {}
             
             for _, player in pairs(Players:GetPlayers()) do
@@ -249,7 +249,7 @@ local function startEmptyServerFinder(resuming, serversChecked)
                     print('[Empty Server] Blocking player:', playerToBlock.Name)
                     blockedThisSession[playerToBlock.UserId] = true
                     blockPlayer(playerToBlock) -- verified inside: returns once actually blocked
-                    task.wait(5)
+                    task.wait(10)
                 end
             end
             
