@@ -749,6 +749,14 @@ bossSkillIgnored = function(enemy, skillName)
     return false
 end
 
+-- Wave-defense noise that can never hurt us: the Lava wave's FireyOrb spam
+-- and the entire Awakened variant kit (MobVariants/Awakened skills all share
+-- the 'Awakened' name prefix)
+local waveIgnoredSkill = function(skillName)
+    if not IN_BETWEEN or type(skillName) ~= 'string' then return false end
+    return skillName == 'FireyOrb' or string.sub(skillName, 1, 8) == 'Awakened'
+end
+
 -- The Between waves pull from the whole game roster (Atheon, Suspended
 -- Unborn, wave bosses): every skill goes through the normal dispatch, the
 -- boss keep-lists and Dodge-tab ignores do the filtering. Lava floors still
@@ -758,7 +766,7 @@ local tagIsDangerous = function(tag)
     -- telegraph through it - 'Lifetime' attr is the fade-in fuse
     if tag == 'EnemySkillHitbox' then return true end
     local sk = tagSkill(tag)
-    if sk and DodgeSkillIgnored[sk] then return false end
+    if sk and (DodgeSkillIgnored[sk] or waveIgnoredSkill(sk)) then return false end
     for _, prefix in next, IGNORED_SKILL_TAGS do
         if string.sub(tag, 1, #prefix) == prefix then return false end
     end
@@ -1049,6 +1057,7 @@ task.spawn(function()
             DodgeSeenSkills[skillName] = true -- feeds the Dodge tab attack list
         end
         if bossSkillIgnored(enemy, skillName) then return end
+        if waveIgnoredSkill(skillName) then return end -- Between filler: FireyOrb + Awakened kit
         if DodgeSkillIgnored[skillName] then return end -- ignored in the Dodge tab
         DangerZones.LastSkillAt = tick()
         if type(skillName) ~= 'string' then return end
