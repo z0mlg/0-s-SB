@@ -1214,7 +1214,10 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
 
             local lightPos = inBlackoutLight()
             if lightPos then
-                HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(lightPos)
+                -- under the arena at the light's X/Z - mobs can't reach us
+                -- down there while the wave thins out
+                local under = Vector3.new(lightPos.X, NUKE_FLOOR_Y - 20, lightPos.Z)
+                HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(under)
             elseif Toggles.UseWaypoint.Value and waypoint then
                 HumanoidRootPart.CFrame = HumanoidRootPart.CFrame.Rotation + resolveDodge(waypoint.Position)
             end
@@ -1254,13 +1257,15 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         end
 
         -- blackout: never stand outside the light - pull the point back toward
-        -- the orb if the target sits near its edge
+        -- the orb if the target sits near its edge. FLAT X/Z only: the farm
+        -- offset puts us under the floor, a 3D clamp would fight that every tick
         local lightPos, lightRange = inBlackoutLight()
         if lightPos then
-            local fromLight = targetPos - lightPos
+            local flat = Vector3.new(targetPos.X - lightPos.X, 0, targetPos.Z - lightPos.Z)
             local maxDist = math.max(lightRange - 4, 0)
-            if fromLight.Magnitude > maxDist then
-                targetPos = lightPos + fromLight.Unit * maxDist
+            if flat.Magnitude > maxDist then
+                local pulled = lightPos + flat.Unit * maxDist
+                targetPos = Vector3.new(pulled.X, targetPos.Y, pulled.Z)
             end
         end
 
