@@ -239,7 +239,8 @@ local function startEmptyServerFinder(resuming, serversChecked)
             end
             
             if #playersList > 0 then
-                for i = 1, playersToBlock do
+                local targets = {}
+                for _ = 1, playersToBlock do
                     if #playersList == 0 then break end
                     
                     local randomIndex = math.random(1, #playersList)
@@ -248,8 +249,19 @@ local function startEmptyServerFinder(resuming, serversChecked)
                     
                     print('[Empty Server] Blocking player:', playerToBlock.Name)
                     blockedThisSession[playerToBlock.UserId] = true
-                    blockPlayer(playerToBlock) -- verified inside: returns once actually blocked
-                    if i < playersToBlock then task.wait(10) end -- only between calls
+                    table.insert(targets, playerToBlock)
+                    task.spawn(blockPlayer, playerToBlock) -- background: modal retries on its own
+                end
+                -- hop as soon as ONE confirms; cap the wait so a dead modal
+                -- can't stall the search
+                local deadline = tick() + 10
+                while #targets > 0 and tick() < deadline do
+                    local confirmed = false
+                    for _, p in next, targets do
+                        if not p.Parent or isPlayerBlocked(p) then confirmed = true break end
+                    end
+                    if confirmed then break end
+                    task.wait(0.5)
                 end
             end
             

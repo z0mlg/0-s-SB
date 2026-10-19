@@ -293,18 +293,19 @@ local panicWatch = function(player)
         if #offenders == 0 then return end -- everyone's gone, nothing to block
 
         panicHopping = true
-        -- block just 1 - same as the join gate, one block is enough to hop
-        local targets = { offenders[1] }
-        for i, p in next, targets do
-            blockPlayer(p)
-            if i < #targets then task.wait(10) end -- spacing only between calls
-        end
-        -- hold until the server-side blocklist confirms them before hopping
-        waitAllBlocked(targets, 15)
+        -- block 1 in the background; poll the blocklist every 0.5s and bounce
+        -- the instant it confirms (or the target's simply gone)
+        local target = offenders[1]
+        task.spawn(blockPlayer, target)
 
         -- resume this floor + position after the hub bounce makes a new server
         if saveServerSwitchConfig and HumanoidRootPart then
             saveServerSwitchConfig(game.PlaceId, panicResumePos or HumanoidRootPart.Position)
+        end
+        local deadline = tick() + 15
+        while target.Parent and tick() < deadline do
+            if isPlayerBlocked(target) then break end
+            task.wait(0.5)
         end
         pcall(function()
             game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)

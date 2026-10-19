@@ -862,8 +862,9 @@ local joinGateBlockAndHop = function()
             if t and t.Value then pcall(function() t:SetValue(false) end) end
         end
     end
-    -- block 1 of them, then HOLD until GetBlockedUserIds confirms it -
-    -- leaving before the block lands defeats the point
+    -- block 1 of them in the BACKGROUND: the modal flow keeps retrying while
+    -- a 0.5s poll watches GetBlockedUserIds - the instant any target confirms
+    -- (or just leaves), we hub. No serial block-then-wait.
     local targets = {}
     for _, p in next, Players:GetPlayers() do
         if #targets >= 1 then break end
@@ -871,11 +872,9 @@ local joinGateBlockAndHop = function()
             table.insert(targets, p)
         end
     end
-    for i, p in next, targets do
-        blockPlayer(p)
-        if i < #targets then task.wait(10) end -- spacing only between calls
+    for _, p in next, targets do
+        task.spawn(blockPlayer, p)
     end
-    waitAllBlocked(targets, 15)
     pcall(function()
         if writefile and isfolder and HumanoidRootPart then
             if not isfolder('Bluu') then makefolder('Bluu') end
@@ -895,13 +894,28 @@ local joinGateBlockAndHop = function()
             }))
         end
     end)
-    pcall(function()
+    local hop = function()
         -- 8s debounce only - TeleportInitFailed clears it instantly so a
         -- silent reject retries on the next gate pass, not half a min later
         if lastGateTeleport and tick() - lastGateTeleport < 8 then return end
         lastGateTeleport = tick()
-        game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
-    end)
+        pcall(function()
+            game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
+        end)
+    end
+    -- 0.5s poll: leave as soon as ONE target is verified blocked or gone;
+    -- 15s cap so a dead modal can't seat us forever
+    local deadline = tick() + 15
+    while #targets > 0 and tick() < deadline do
+        for _, p in next, targets do
+            if not p.Parent or isPlayerBlocked(p) then
+                hop()
+                return
+            end
+        end
+        task.wait(0.5)
+    end
+    hop()
 end
 
 game:GetService('TeleportService').TeleportInitFailed:Connect(function(player)
