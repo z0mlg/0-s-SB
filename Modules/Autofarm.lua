@@ -396,7 +396,12 @@ local tagSkill = function(tag)
 end
 
 local trackTelegraph = function(inst, low, skill)
-    if skill and DodgeSkillIgnored[skill] then return end -- ignored in the Dodge tab
+    -- untagged hazards have no name: attribute them to the last skill cast so
+    -- ignores (Dodge tab + Between wave filters) reach them too
+    if not skill and tick() - DangerZones.LastSkillAt < 4 then
+        skill = DangerZones.LastSkill
+    end
+    if skill and (DodgeSkillIgnored[skill] or waveIgnoredSkill(skill)) then return end
     local life = inst.GetAttribute and inst:GetAttribute('Lifetime')
     local duration = (type(life) == 'number' and life or 4) + 2.5
     local zone
@@ -692,10 +697,43 @@ workspace.DescendantAdded:Connect(function(inst)
     task.defer(armNukeWatch)
 end)
 
+-- multi-account OceanGyzer casts carpet the whole arena: sidestepping one
+-- gyzer just lands inside the next. While any gyzer zone is live AND our stand
+-- point is inside a zone, hold a point clear of every zone until they expire -
+-- then the farm loop takes us back to the boss on its own.
+local gyzerEscapePoint = function(pos)
+    if not IN_BETWEEN then return end
+    local now = tick()
+    local gyzerActive, inside = false, false
+    for _, z in next, DangerZones.List do
+        if z.Skill == 'OceanGyzer' and (not z.Expires or z.Expires > now) then
+            gyzerActive = true
+        end
+        local ok, ex, _, ly = pcall(zoneHit, z, pos.X, pos.Z, now)
+        if ok and ((ex and ex ~= 'dead') or ly) then inside = true end
+    end
+    if not (gyzerActive and inside) then return end
+    -- nearest ring point clear of every zone, scanning 60-150 studs out
+    for _, dist in next, { 60, 100, 150 } do
+        for i = 0, 11 do
+            local a = i / 12 * math.pi * 2
+            local cx, cz = pos.X + math.cos(a) * dist, pos.Z + math.sin(a) * dist
+            local clear = true
+            for _, z in next, DangerZones.List do
+                local ok, ex, _, ly = pcall(zoneHit, z, cx, cz, now)
+                if ok and ((ex and ex ~= 'dead') or ly) then clear = false break end
+            end
+            if clear then return Vector3.new(cx, pos.Y, cz) end
+        end
+    end
+end
+
 local resolveDodge = function(pos)
     if not dodgeEnabled() then return pos end
     local cover = nukeCoverPoint()
     if cover then return cover end
+    local escape = gyzerEscapePoint(pos)
+    if escape then return escape end
     local list = DangerZones.List
     if #list == 0 then return pos end
     local x, z = pos.X, pos.Z
@@ -749,12 +787,15 @@ bossSkillIgnored = function(enemy, skillName)
     return false
 end
 
--- Wave-defense noise that can never hurt us: the Lava wave's FireyOrb spam
--- and the entire Awakened variant kit (MobVariants/Awakened skills all share
--- the 'Awakened' name prefix)
-local waveIgnoredSkill = function(skillName)
+-- Wave-defense noise that can never hurt us: the Lava wave's FireyOrb spam,
+-- the entire Awakened variant kit (MobVariants/Awakened skills all share the
+-- 'Awakened' name prefix), and Dracula's MagicStakes - the sheer stake count
+-- lags the zone tracker more than the stakes hurt. Global like
+-- bossSkillIgnored: trackTelegraph is defined earlier in this file.
+waveIgnoredSkill = function(skillName)
     if not IN_BETWEEN or type(skillName) ~= 'string' then return false end
-    return skillName == 'FireyOrb' or string.sub(skillName, 1, 8) == 'Awakened'
+    return skillName == 'FireyOrb' or skillName == 'MagicStakes'
+        or string.sub(skillName, 1, 8) == 'Awakened'
 end
 
 -- The Between waves pull from the whole game roster (Atheon, Suspended
@@ -801,13 +842,18 @@ workspace.DescendantAdded:Connect(function(inst)
         end
         if not inst:IsA('BasePart') then return end
         if tick() - DangerZones.LastSkillAt > 4 then return end
+        -- the fallback's zones carry the last-cast skill's name: ignored
+        -- skills (FireyOrb orbs, MagicStakes parts) spawn no zones at all
+        local stamp = DangerZones.LastSkill
+        if stamp and (DodgeSkillIgnored[stamp] or waveIgnoredSkill(stamp)) then return end
         if inst:IsDescendantOf(Mobs) then return end
         if type(getconnections) ~= 'function' then return end
         local model = inst:FindFirstAncestorOfClass('Model')
         if model and model:FindFirstChildOfClass('Humanoid') then return end
         local ok2, conns = pcall(getconnections, inst.Touched)
         if ok2 and type(conns) == 'table' and #conns > 0 then
-            addPartZone(inst, 10)
+            local zone = addPartZone(inst, 10)
+            if stamp and zone then zone.Skill = stamp end
         end
     end)
 end)
@@ -1055,11 +1101,15 @@ task.spawn(function()
         if getgenv().Bluu == false then return end
         if type(skillName) == 'string' then
             DodgeSeenSkills[skillName] = true -- feeds the Dodge tab attack list
+            -- stamp BEFORE the ignore returns: untagged hazard parts spawn
+            -- seconds later and attribute to whatever cast last - that is how
+            -- ignores reach parts the tag system never named
+            DangerZones.LastSkillAt = tick()
+            DangerZones.LastSkill = skillName
         end
         if bossSkillIgnored(enemy, skillName) then return end
-        if waveIgnoredSkill(skillName) then return end -- Between filler: FireyOrb + Awakened kit
+        if waveIgnoredSkill(skillName) then return end -- Between filler: FireyOrb + Awakened kit + stakes
         if DodgeSkillIgnored[skillName] then return end -- ignored in the Dodge tab
-        DangerZones.LastSkillAt = tick()
         if type(skillName) ~= 'string' then return end
         hookSkillTags(skillName)
 
