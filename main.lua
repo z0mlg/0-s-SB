@@ -769,6 +769,68 @@ RESTART_GATE_FILE = `Bluu/Swordburst 2/restartgate_{LocalPlayer.UserId}`
 pcall(function() -- legacy shared flag armed every account - remove it
     if isfile and isfile('Bluu/Swordburst 2/restartgate') then delfile('Bluu/Swordburst 2/restartgate') end
 end)
+
+-- ===================== WRONG-FLOOR RESCUE =====================
+-- Every hop channel (Server Switch, Restart Server, panic/admin block+rejoin,
+-- empty server) leaves an armed config naming the floor it wants. A bad hop
+-- can drop us somewhere else entirely - Floor 1's Woodlands while we farmed
+-- floor 10. If this isn't the hop's target floor, leave BEFORE the gate or
+-- any module runs: teleport straight to the right floor (hub bounce as the
+-- fallback - its resume block reads the same config). Blocking players on a
+-- floor we don't even want is pointless.
+local LASTFLOOR_FILE = `Bluu/Swordburst 2/lastfloor_{LocalPlayer.UserId}`
+local hopTargetFloor = function()
+    for _, file in next, { 'Bluu/Swordburst 2/serverswitch', 'Bluu/Swordburst 2/emptyserver' } do
+        if isfile and isfile(file) then
+            local ok, cfg = pcall(function()
+                return game:GetService('HttpService'):JSONDecode(readfile(file))
+            end)
+            if ok and type(cfg) == 'table' and cfg.active and type(cfg.targetPlace) == 'number' then
+                return cfg.targetPlace
+            end
+        end
+    end
+end
+
+local wantFloor = hopTargetFloor()
+if not wantFloor then
+    -- restart gate armed but no config survived: our remembered home floor
+    local ok, flag = pcall(readfile, RESTART_GATE_FILE)
+    if ok and flag == '1' and isfile and isfile(LASTFLOOR_FILE) then
+        local ok2, saved = pcall(readfile, LASTFLOOR_FILE)
+        if ok2 then wantFloor = tonumber(saved) end
+    end
+end
+
+-- The Between is a party place: never yank someone out of a dungeon run for a
+-- stale floor config
+if wantFloor and wantFloor ~= game.PlaceId
+    and game.PlaceId ~= OML_RELOAD_PLACE and not IN_BETWEEN then
+    warn('[Bluu] Landed on the wrong floor - returning to', wantFloor)
+    task.spawn(function()
+        for _ = 1, 3 do
+            pcall(function()
+                Function:InvokeServer('Teleport', { 'Teleport', wantFloor })
+            end)
+            task.wait(6) -- still here? the invoke didn't take
+        end
+        pcall(function()
+            game:GetService('TeleportService'):Teleport(OML_RELOAD_PLACE, LocalPlayer)
+        end)
+    end)
+    return -- nothing runs on a floor we didn't ask for
+end
+
+-- right floor (or no hop armed): this is home - remember it for the next drop
+if game.PlaceId ~= OML_RELOAD_PLACE then
+    pcall(function()
+        if not (isfolder and writefile) then return end
+        if not isfolder('Bluu') then makefolder('Bluu') end
+        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
+        writefile(LASTFLOOR_FILE, tostring(game.PlaceId))
+    end)
+end
+
 local joinGateArmed = (function()
     if IN_BETWEEN then return false end -- the other players are your party
     if not (isfile and readfile) or not isfile(RESTART_GATE_FILE) then return false end
