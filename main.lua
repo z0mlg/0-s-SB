@@ -734,13 +734,16 @@ blockPlayer = function(player)
     while player.Parent do
         if isPlayerBlocked(player) then return true end
 
-        StarterGui:SetCore('PromptBlockPlayer', player)
-
-        local modal
-        for _ = 1, 40 do
-            modal = findBlockModal()
-            if modal then break end
-            task.wait(0.05)
+        -- a previous attempt may have left the modal open - PromptBlockPlayer
+        -- no-ops while one is up, so reuse it instead of waiting for a new one
+        local modal = findBlockModal()
+        if not modal then
+            StarterGui:SetCore('PromptBlockPlayer', player)
+            for _ = 1, 20 do
+                modal = findBlockModal()
+                if modal then break end
+                task.wait(0.05)
+            end
         end
 
         if modal then
@@ -753,7 +756,7 @@ blockPlayer = function(player)
         task.wait(0.3)
         if isPlayerBlocked(player) then return true end
 
-        task.wait(1.5)
+        task.wait(0.7)
     end
     return true -- target left: nothing left to block
 end
@@ -868,9 +871,9 @@ local joinGateBlockAndHop = function()
             table.insert(targets, p)
         end
     end
-    for _, p in next, targets do
+    for i, p in next, targets do
         blockPlayer(p)
-        task.wait(10) -- spacing between block calls
+        if i < #targets then task.wait(10) end -- spacing only between calls
     end
     waitAllBlocked(targets, 15)
     pcall(function()
@@ -893,11 +896,17 @@ local joinGateBlockAndHop = function()
         end
     end)
     pcall(function()
-        if lastGateTeleport and tick() - lastGateTeleport < 30 then return end
+        -- 8s debounce only - TeleportInitFailed clears it instantly so a
+        -- silent reject retries on the next gate pass, not half a min later
+        if lastGateTeleport and tick() - lastGateTeleport < 8 then return end
         lastGateTeleport = tick()
         game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
     end)
 end
+
+game:GetService('TeleportService').TeleportInitFailed:Connect(function(player)
+    if player == LocalPlayer then lastGateTeleport = nil end
+end)
 
 if joinGateArmed then
     -- hold module loading hostage until the server is empty

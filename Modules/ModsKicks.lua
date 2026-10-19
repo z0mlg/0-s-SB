@@ -295,9 +295,9 @@ local panicWatch = function(player)
         panicHopping = true
         -- block just 1 - same as the join gate, one block is enough to hop
         local targets = { offenders[1] }
-        for _, p in next, targets do
+        for i, p in next, targets do
             blockPlayer(p)
-            task.wait(10) -- spacing between block calls
+            if i < #targets then task.wait(10) end -- spacing only between calls
         end
         -- hold until the server-side blocklist confirms them before hopping
         waitAllBlocked(targets, 15)

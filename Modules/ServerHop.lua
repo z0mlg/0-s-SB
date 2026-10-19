@@ -249,7 +249,7 @@ local function startEmptyServerFinder(resuming, serversChecked)
                     print('[Empty Server] Blocking player:', playerToBlock.Name)
                     blockedThisSession[playerToBlock.UserId] = true
                     blockPlayer(playerToBlock) -- verified inside: returns once actually blocked
-                    task.wait(10)
+                    if i < playersToBlock then task.wait(10) end -- only between calls
                 end
             end
             
