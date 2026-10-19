@@ -84,6 +84,7 @@ if game.PlaceId == OML_RELOAD_PLACE then -- Arcadia 'hub' - a transit stop, not 
             end
         end)
         if not cfg then return end -- manual hub visit - nothing saved to resume
+        if cfg.targetPlace == OML_RELOAD_PLACE then return end -- never resume TO the hub itself
         print('[Bluu] Resuming floor:', cfg.targetPlace)
         while game.PlaceId == OML_RELOAD_PLACE do
             pcall(function()
@@ -788,7 +789,8 @@ local hopTargetFloor = function()
             local ok, cfg = pcall(function()
                 return game:GetService('HttpService'):JSONDecode(readfile(file))
             end)
-            if ok and type(cfg) == 'table' and cfg.active and type(cfg.targetPlace) == 'number' then
+            if ok and type(cfg) == 'table' and cfg.active and type(cfg.targetPlace) == 'number'
+                and cfg.targetPlace ~= OML_RELOAD_PLACE then -- hub is never a 'return to' floor
                 return cfg.targetPlace
             end
         end
