@@ -61,14 +61,14 @@ if queue_on_teleport and OML_SCRIPT_URL ~= '' and not autoexecOff then
 end
 
 if game.PlaceId == OML_RELOAD_PLACE then -- Arcadia 'hub' - a transit stop, not a place to farm
-    print('[Bluu] Hub world - logging in, then returning to the saved floor')
+    print('[Bluu] Hub world - logging in')
     Function:InvokeServer('Login')
-    -- modules never load here (return below), so the resume has to happen
-    -- right in this block: read whichever config armed the bounce and keep
-    -- invoking the floor teleport until we leave - a dropped invoke used to
-    -- strand us on Floor 1 forever
+    -- Login alone may bounce us back to our floor; only if we're still parked
+    -- on Arcadia after giving it time do we fall back to the remote resume.
+    -- (modules never load here - this block is the only resume path)
     task.spawn(function()
-        task.wait(2)
+        task.wait(10)
+        if game.PlaceId ~= OML_RELOAD_PLACE then return end -- Login moved us already
         local cfg
         pcall(function()
             for _, file in next, { 'Bluu/Swordburst 2/serverswitch', 'Bluu/Swordburst 2/emptyserver' } do
@@ -84,7 +84,6 @@ if game.PlaceId == OML_RELOAD_PLACE then -- Arcadia 'hub' - a transit stop, not 
             end
         end)
         if not cfg then return end -- manual hub visit - nothing saved to resume
-        if cfg.targetPlace == OML_RELOAD_PLACE then return end -- never resume TO the hub itself
         print('[Bluu] Resuming floor:', cfg.targetPlace)
         while game.PlaceId == OML_RELOAD_PLACE do
             pcall(function()
