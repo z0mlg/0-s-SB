@@ -11,6 +11,25 @@ getItemById = function(id)
     end
 end
 
+-- equip and PROVE it: the EquipWeapon invoke can drop, and the item instance
+-- we saved can go stale when the inventory rebuilds. Re-fetch by the equip id
+-- every retry and loop until Equip.<slot> reports our id back - caller blocks
+-- until then, so attacks never resume while we're swinging nothing.
+equipVerified = function(item, slot, wantId, timeout)
+    if not item then return true end
+    wantId = wantId or item.Value
+    if not wantId then return true end
+    local slotValue = slot == 'Right' and Equip.Right or Equip.Left
+    local deadline = tick() + (timeout or 8)
+    repeat
+        if slotValue.Value == wantId then return true end
+        local fresh = getItemById(wantId) or item -- stale instance? re-fetch
+        InvokeFunction('Equipment', { 'EquipWeapon', fresh, slot })
+        task.wait(0.3)
+    until tick() > deadline
+    return slotValue.Value == wantId
+end
+
 getItemDamageOrDefense = (function()
     local maxUpgrades = {
         Common = 10,
@@ -332,8 +351,11 @@ KillauraSkill.Use = function()
     if self.Sword ~= rightSword then
         local rightSwordOld = rightSword
         local leftSwordOld = leftSword
+        -- save the equip IDs, not just instances: ids survive inventory rebuilds
+        local rightId, leftId = Equip.Right.Value, Equip.Left.Value
 
-        InvokeFunction('Equipment', { 'EquipWeapon', self.Sword, 'Right' })
+        -- verify the swap too: firing the skill with the wrong weapon wastes it
+        equipVerified(self.Sword, 'Right', self.Sword.Value, 1.5)
 
         self._use()
         if rightSwordOld then
@@ -345,9 +367,11 @@ KillauraSkill.Use = function()
                 staminaOld = value
             end, 0.1)
             task.wait(0.05)
-            InvokeFunction('Equipment', { 'EquipWeapon', rightSwordOld, 'Right' })
+            -- restore the ORIGINAL sword and confirm it landed before any
+            -- more attacks go out - retries until Equip.Right reports it back
+            equipVerified(rightSwordOld, 'Right', rightId)
             if leftSwordOld then
-                InvokeFunction('Equipment', { 'EquipWeapon', leftSwordOld, 'Left' })
+                equipVerified(leftSwordOld, 'Left', leftId)
             end
         end
         return
@@ -358,6 +382,7 @@ KillauraSkill.Use = function()
     end
 
     local leftSwordOld = leftSword
+    local leftId = Equip.Left.Value
     InvokeFunction('Equipment', { 'Unequip', leftSwordOld })
     self._use()
     local staminaOld = Stamina.Value
@@ -367,7 +392,7 @@ KillauraSkill.Use = function()
         end
         staminaOld = value
     end, 0.1)
-    InvokeFunction('Equipment', { 'EquipWeapon', leftSwordOld, 'Left' })
+    equipVerified(leftSwordOld, 'Left', leftId)
 end
 
 dealDamage = (function()
