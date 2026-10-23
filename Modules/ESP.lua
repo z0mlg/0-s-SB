@@ -509,6 +509,29 @@ do
         if kit.equipBar then kit.equipBar.Visible = false end
     end
 
+    -- union of every real body part's world AABB. GetBoundingBox() is useless
+    -- on players: the 'Healthbar' model inside characters only exists nearby
+    -- and drifts outside the body, inflating the bounds to a giant box
+    local function charBounds(model)
+        local minV = Vector3.new(math.huge, math.huge, math.huge)
+        local maxV = Vector3.new(-math.huge, -math.huge, -math.huge)
+        local any = false
+        for _, inst in next, model:GetDescendants() do
+            if inst:IsA('BasePart') and inst.Name ~= 'Healthbar' and not inst:FindFirstAncestor('Healthbar') then
+                any = true
+                local cf, h = inst.CFrame, inst.Size / 2
+                for i = 1, 8 do
+                    local s = CORNER_SIGNS[i]
+                    local p = cf * Vector3.new(s[1] * h.X, s[2] * h.Y, s[3] * h.Z)
+                    minV = Vector3.new(math.min(minV.X, p.X), math.min(minV.Y, p.Y), math.min(minV.Z, p.Z))
+                    maxV = Vector3.new(math.max(maxV.X, p.X), math.max(maxV.Y, p.Y), math.max(maxV.Z, p.Z))
+                end
+            end
+        end
+        if not any then return end
+        return CFrame.new((minV + maxV) / 2), maxV - minV
+    end
+
     local function drawEsp(model, key, cfg, plr)
         local kit = kits[key]
         local rootPart = model and model:FindFirstChild('HumanoidRootPart')
@@ -571,33 +594,14 @@ do
         local minX, minY, maxX, maxY, centerX, w, h
 
         if onScreen then
-            -- players get the full character bounds; mobs use the HRP hitbox only
+            -- players: union of body parts (Healthbar excluded); mobs: HRP hitbox
             local cf, size
             if plr then
-                -- union of real body parts only: GetBoundingBox() counts
-                -- accessories/hidden parts and balloons on streamed models
-                local minP = Vector3.one * math.huge
-                local maxP = -minP
-                local any
-                for _, d in model:GetDescendants() do
-                    if d:IsA('BasePart') and not d:FindFirstAncestorOfClass('Accessory')
-                        and not d:FindFirstAncestorOfClass('Tool') then
-                        local e = d.CFrame:VectorToWorldSpace(d.Size / 2)
-                        e = Vector3.new(math.abs(e.X), math.abs(e.Y), math.abs(e.Z))
-                        minP = minP:Min(d.Position - e)
-                        maxP = maxP:Max(d.Position + e)
-                        any = true
-                    end
-                end
-                if any then
-                    cf = CFrame.new((minP + maxP) / 2)
-                    size = maxP - minP
-                else
-                    cf, size = rootPart.CFrame, rootPart.Size
-                end
+                cf, size = charBounds(model)
             else
                 cf, size = rootPart.CFrame, rootPart.Size
             end
+            if not cf then return end
             local half = size / 2
 
             local pts = {}
