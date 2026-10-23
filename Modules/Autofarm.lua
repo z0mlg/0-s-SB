@@ -2187,12 +2187,32 @@ local DodgeBox = DodgeTab:AddLeftGroupbox('Attack sizes', 'scaling')
 local DodgeListBox = DodgeTab:AddRightGroupbox('Configured', 'list')
 
 local manualDodgeSkills = {} -- names added by hand via the input box
-local dodgeControls = {} -- attack name -> slider option id (section exists)
+local dodgeControls = {} -- attack name -> slider option id (controls exist)
+local dodgeMobBoxes = {} -- mob name -> groupbox
+local dodgeMobCounts = {} -- mob name -> attacks added so far (divider spacing)
 local suppressScaleWrite = false
 
--- one groupbox per attack, alternating columns so the tab stays balanced.
--- Created on demand as attacks get discovered.
+-- skill name -> catalog mob (its groupbox). Anything unmatched lands in Other
+local skillMob = function(name)
+    for boss, skills in next, DODGE_SKILL_CATALOG do
+        for _, s in next, skills do
+            if s == name then return boss end
+        end
+    end
+end
+
 local dodgeColumnRight = false
+local makeMobBox = function(mob)
+    local box = dodgeMobBoxes[mob]
+    if not box then
+        box = dodgeColumnRight and DodgeTab:AddRightGroupbox(mob) or DodgeTab:AddLeftGroupbox(mob)
+        dodgeColumnRight = not dodgeColumnRight
+        dodgeMobBoxes[mob] = box
+        dodgeMobCounts[mob] = 0
+    end
+    return box
+end
+
 local makeDodgeSection
 makeDodgeSection = function(name)
     if dodgeControls[name] then return end
@@ -2200,10 +2220,13 @@ makeDodgeSection = function(name)
     local ignoreKey = 'DodgeOn_' .. string.gsub(name, '[^%w]', '_')
     dodgeControls[name] = key
 
-    local box = dodgeColumnRight and DodgeTab:AddRightGroupbox(name) or DodgeTab:AddLeftGroupbox(name)
-    dodgeColumnRight = not dodgeColumnRight
+    local mob = skillMob(name) or 'Other'
+    local box = makeMobBox(mob)
+    if dodgeMobCounts[mob] > 0 then box:AddDivider() end -- visible gap between attacks
+    dodgeMobCounts[mob] = dodgeMobCounts[mob] + 1
+
     box:AddToggle(ignoreKey, {
-        Text = 'Dodge this attack',
+        Text = name,
         Default = DodgeSkillIgnored[name] ~= true,
         Tooltip = `Off: {name} casts produce no danger zones at all`,
     }):OnChanged(function(value)
