@@ -2183,8 +2183,7 @@ if IN_BETWEEN or game.PlaceId == 121252145396212 then
     DODGE_PLACE_SKILLS[game.PlaceId] = BETWEEN_SKILLS
 end
 
-local DodgeBox = DodgeTab:AddLeftGroupbox('Attack sizes', 'scaling')
-local DodgeListBox = DodgeTab:AddRightGroupbox('Configured', 'list')
+local DodgeListBox = DodgeTab:AddLeftGroupbox('Configured', 'list')
 
 local manualDodgeSkills = {} -- names added by hand via the input box
 local dodgeControls = {} -- attack name -> slider option id (controls exist)
@@ -2281,7 +2280,7 @@ refreshDodgeAttacks = function()
     for _, name in next, names do makeDodgeSection(name) end
 end
 
-DodgeBox:AddInput('DodgeAttackName', {
+DodgeListBox:AddInput('DodgeAttackName', {
     Text = 'Add attack by name',
     Tooltip = 'Exact skill name (e.g. LavaSmash) - creates a section for attacks not seen yet',
     Finished = true,
@@ -2301,8 +2300,11 @@ DodgeListBox:AddButton('Reset all to global', function()
     end
     suppressScaleWrite = false
 end)
+DodgeListBox:AddDivider()
 
-local dodgeCfgLabel = DodgeListBox:AddLabel('')
+-- one label per override: a single multi-line label overflows its holder and
+-- paints over neighbouring elements
+local dodgeCfgLabels = {}
 task.spawn(function()
     while getgenv().Bluu ~= false do
         refreshDodgeAttacks()
@@ -2311,9 +2313,21 @@ task.spawn(function()
             table.insert(lines, `{name} = {scale}x`)
         end
         table.sort(lines)
-        pcall(function()
-            dodgeCfgLabel:SetText(#lines > 0 and table.concat(lines, '\n') or 'No per-attack sizes yet')
-        end)
+        if #lines == 0 then lines[1] = 'No per-attack sizes yet' end
+        for i = 1, #lines do
+            local lbl = dodgeCfgLabels[i]
+            if not lbl then
+                lbl = DodgeListBox:AddLabel('')
+                dodgeCfgLabels[i] = lbl
+            end
+            pcall(function()
+                lbl:SetText(lines[i])
+                if lbl.Holder then lbl.Holder.Visible = true end
+            end)
+        end
+        for i = #lines + 1, #dodgeCfgLabels do
+            pcall(function() dodgeCfgLabels[i].Holder.Visible = false end)
+        end
         task.wait(2)
     end
 end)
