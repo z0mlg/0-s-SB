@@ -787,7 +787,11 @@ end)
 -- any module runs: teleport straight to the right floor (hub bounce as the
 -- fallback - its resume block reads the same config). Blocking players on a
 -- floor we don't even want is pointless.
-local LASTFLOOR_FILE = `Bluu/Swordburst 2/lastfloor_{LocalPlayer.UserId}`
+-- stale lastfloor_<UserId> from older versions: read by nothing, kill it once
+if isfile and delfile then
+    local stale = `Bluu/Swordburst 2/lastfloor_{LocalPlayer.UserId}`
+    if isfile(stale) then pcall(delfile, stale) end
+end
 local hopTargetFloor = function()
     for _, file in next, { 'Bluu/Swordburst 2/serverswitch', 'Bluu/Swordburst 2/emptyserver' } do
         if isfile and isfile(file) then
@@ -827,16 +831,6 @@ if wantFloor and wantFloor ~= game.PlaceId
         end)
     end)
     return -- nothing runs on a floor we didn't ask for
-end
-
--- right floor (or no hop armed): this is home - remember it for the next drop
-if game.PlaceId ~= OML_RELOAD_PLACE then
-    pcall(function()
-        if not (isfolder and writefile) then return end
-        if not isfolder('Bluu') then makefolder('Bluu') end
-        if not isfolder('Bluu/Swordburst 2') then makefolder('Bluu/Swordburst 2') end
-        writefile(LASTFLOOR_FILE, tostring(game.PlaceId))
-    end)
 end
 
 local joinGateArmed = (function()
