@@ -351,7 +351,7 @@ do
         return slot
     end
 
-    local SLOT_PX = 48
+    local SLOT_PX = 64
     local function updateEquipBar(kit, slots)
         local tpl = getSlotTemplate()
         local parts = {}
