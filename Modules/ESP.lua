@@ -574,7 +574,27 @@ do
             -- players get the full character bounds; mobs use the HRP hitbox only
             local cf, size
             if plr then
-                cf, size = model:GetBoundingBox()
+                -- union of real body parts only: GetBoundingBox() counts
+                -- accessories/hidden parts and balloons on streamed models
+                local minP = Vector3.one * math.huge
+                local maxP = -minP
+                local any
+                for _, d in model:GetDescendants() do
+                    if d:IsA('BasePart') and not d:FindFirstAncestorOfClass('Accessory')
+                        and not d:FindFirstAncestorOfClass('Tool') then
+                        local e = d.CFrame:VectorToWorldSpace(d.Size / 2)
+                        e = Vector3.new(math.abs(e.X), math.abs(e.Y), math.abs(e.Z))
+                        minP = minP:Min(d.Position - e)
+                        maxP = maxP:Max(d.Position + e)
+                        any = true
+                    end
+                end
+                if any then
+                    cf = CFrame.new((minP + maxP) / 2)
+                    size = maxP - minP
+                else
+                    cf, size = rootPart.CFrame, rootPart.Size
+                end
             else
                 cf, size = rootPart.CFrame, rootPart.Size
             end
