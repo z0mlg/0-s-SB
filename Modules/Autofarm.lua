@@ -2186,7 +2186,7 @@ end
 local DodgeListBox = DodgeTab:AddLeftGroupbox('Configured', 'list')
 
 local manualDodgeSkills = {} -- names added by hand via the input box
-local dodgeControls = {} -- attack name -> slider option id (controls exist)
+local dodgeControls = {} -- attack name -> { key, box, els } (controls exist)
 local dodgeMobBoxes = {} -- mob name -> groupbox
 local dodgeMobCounts = {} -- mob name -> attacks added so far (divider spacing)
 local suppressScaleWrite = false
@@ -2212,19 +2212,28 @@ local makeMobBox = function(mob)
     return box
 end
 
+local function removeDodgeElement(box, el)
+    for i, e in next, box.Elements do
+        if e == el then table.remove(box.Elements, i) break end
+    end
+    pcall(function() el.Holder:Destroy() end)
+end
+
 local makeDodgeSection
 makeDodgeSection = function(name)
     if dodgeControls[name] then return end
     local key = 'DodgeScale_' .. string.gsub(name, '[^%w]', '_')
     local ignoreKey = 'DodgeOn_' .. string.gsub(name, '[^%w]', '_')
-    dodgeControls[name] = key
 
     local mob = skillMob(name) or 'Other'
     local box = makeMobBox(mob)
-    if dodgeMobCounts[mob] > 0 then box:AddDivider() end -- visible gap between attacks
+    local els = {}
+    if dodgeMobCounts[mob] > 0 then
+        els[#els + 1] = box:AddDivider() -- visible gap between attacks
+    end
     dodgeMobCounts[mob] = dodgeMobCounts[mob] + 1
 
-    box:AddToggle(ignoreKey, {
+    els[#els + 1] = box:AddToggle(ignoreKey, {
         Text = name,
         Default = DodgeSkillIgnored[name] ~= true,
         Tooltip = `Off: {name} casts produce no danger zones at all`,
@@ -2232,7 +2241,7 @@ makeDodgeSection = function(name)
         DodgeSkillIgnored[name] = not value or nil
         saveDodgeIgnored()
     end)
-    box:AddSlider(key, {
+    els[#els + 1] = box:AddSlider(key, {
         Text = 'Zone size',
         Default = DodgeSkillScales[name] or dodgeScale(),
         Min = 0.5,
@@ -2246,16 +2255,28 @@ makeDodgeSection = function(name)
         DodgeSkillScales[name] = value
         saveDodgeScales()
     end)
-    box:AddButton({
-        Text = 'Use global size',
-        Func = function()
-            DodgeSkillScales[name] = nil
-            saveDodgeScales()
-            suppressScaleWrite = true
-            pcall(function() Options[key]:SetValue(dodgeScale()) end)
-            suppressScaleWrite = false
-        end,
-    })
+    -- only attacks the user added by hand get a Remove button; auto-detected
+    -- sections can be ignored via the toggle instead of deleted
+    if manualDodgeSkills[name] then
+        els[#els + 1] = box:AddButton({
+            Text = 'Remove attack',
+            Func = function()
+                manualDodgeSkills[name] = nil
+                DodgeSkillScales[name] = nil
+                DodgeSkillIgnored[name] = nil
+                saveDodgeScales()
+                saveDodgeIgnored()
+                Options[key] = nil
+                Options[ignoreKey] = nil
+                for _, el in next, dodgeControls[name].els do
+                    removeDodgeElement(box, el)
+                end
+                dodgeControls[name] = nil
+                dodgeMobCounts[mob] = dodgeMobCounts[mob] - 1
+            end,
+        })
+    end
+    dodgeControls[name] = { key = key, box = box, els = els }
 end
 
 local refreshDodgeAttacks
@@ -2288,6 +2309,13 @@ DodgeListBox:AddInput('DodgeAttackName', {
 }):OnChanged(function(name)
     if type(name) ~= 'string' or name == '' then return end
     manualDodgeSkills[name] = true
+    -- already auto-detected? rebuild it so the Remove button shows up
+    local ctl = dodgeControls[name]
+    if ctl then
+        for _, el in next, ctl.els do removeDodgeElement(ctl.box, el) end
+        dodgeMobCounts[skillMob(name) or 'Other'] -= 1
+        dodgeControls[name] = nil
+    end
     makeDodgeSection(name)
 end)
 
@@ -2295,8 +2323,8 @@ DodgeListBox:AddButton('Reset all to global', function()
     table.clear(DodgeSkillScales)
     saveDodgeScales()
     suppressScaleWrite = true
-    for _, key in next, dodgeControls do
-        pcall(function() Options[key]:SetValue(dodgeScale()) end)
+    for _, ctl in next, dodgeControls do
+        pcall(function() Options[ctl.key]:SetValue(dodgeScale()) end)
     end
     suppressScaleWrite = false
 end)
