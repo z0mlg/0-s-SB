@@ -20,14 +20,18 @@ if getgenv().BluuQueued then
 end
 
 if getgenv().Bluu then
-    -- Flag left over from a dead/crashed run (GUI is gone): clear it and continue
-    if game:GetService('CoreGui'):FindFirstChild('Obsidian') then
+    -- Block while a run is alive: GUI exists once loaded, BluuLoading covers
+    -- the load window before it. Only a flag BOTH old and GUI-less is stale
+    -- (crashed run) - that one clears so re-execute still works.
+    local loading = getgenv().BluuLoading and (os.clock() - getgenv().BluuLoading < 120)
+    if loading or game:GetService('CoreGui'):FindFirstChild('Obsidian') then
         warn('[Bluu] Already running - unload it first (Settings > Unload)')
         return
     end
     warn('[Bluu] Stale flag from a previous run, re-executing')
 end
 getgenv().Bluu = true
+getgenv().BluuLoading = os.clock()
 BluuCleanups = {} -- modules register unload cleanup fns; Settings > Unload runs them
 
 if not game:IsLoaded() then
@@ -374,6 +378,7 @@ Window = Library:CreateWindow({
     -- MenuFadeTime = 0.1,
     Size = UDim2.fromOffset(700, 500)
 })
+getgenv().BluuLoading = nil -- window exists: GUI check covers the guard from here
 
 Main = Window:AddTab('Main', 'user')
 
