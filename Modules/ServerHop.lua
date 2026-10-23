@@ -10,7 +10,8 @@ function saveServerSwitchConfig(targetPlace, position)
     local config = {
         active = true,
         targetPlace = targetPlace,
-        position = {x = position.X, y = position.Y, z = position.Z}
+        position = {x = position.X, y = position.Y, z = position.Z},
+        at = os.time()
     }
     
     writefile('Bluu/Swordburst 2/serverswitch', game:GetService("HttpService"):JSONEncode(config))
@@ -23,7 +24,11 @@ local function loadServerSwitchConfig()
         return game:GetService("HttpService"):JSONDecode(readfile('Bluu/Swordburst 2/serverswitch'))
     end)
     
-    return success and config or nil
+    -- anything without a fresh timestamp is a leftover from an old session
+    if success and type(config) == 'table' and config.at and os.time() - config.at < 600 then
+        return config
+    end
+    return nil
 end
 
 local function clearServerSwitchConfig()
@@ -178,7 +183,8 @@ local function saveEmptyServerConfig(targetPlace, maxPlayers, serversChecked)
         active = true,
         targetPlace = targetPlace,
         maxPlayers = maxPlayers,
-        serversChecked = serversChecked
+        serversChecked = serversChecked,
+        at = os.time()
     }
     
     writefile('Bluu/Swordburst 2/emptyserver', game:GetService("HttpService"):JSONEncode(config))
@@ -191,7 +197,10 @@ local function loadEmptyServerConfig()
         return game:GetService("HttpService"):JSONDecode(readfile('Bluu/Swordburst 2/emptyserver'))
     end)
     
-    return success and config or nil
+    if success and type(config) == 'table' and config.at and os.time() - config.at < 600 then
+        return config
+    end
+    return nil
 end
 
 local function clearEmptyServerConfig()

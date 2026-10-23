@@ -119,6 +119,7 @@ rejoinFreshServer = function()
             active = true,
             targetPlace = game.PlaceId,
             position = { x = pos.X, y = pos.Y, z = pos.Z },
+            at = os.time(),
         }))
     end)
     for _ = 1, 2 do
@@ -788,23 +789,21 @@ local hopTargetFloor = function()
             local ok, cfg = pcall(function()
                 return game:GetService('HttpService'):JSONDecode(readfile(file))
             end)
-            if ok and type(cfg) == 'table' and cfg.active and type(cfg.targetPlace) == 'number'
-                and cfg.targetPlace ~= OML_RELOAD_PLACE then -- hub is never a 'return to' floor
-                return cfg.targetPlace
+            if ok and type(cfg) == 'table' and cfg.active and type(cfg.targetPlace) == 'number' then
+                -- only a hop in actual flight counts: fresh (under 10 min) and
+                -- pointed at a real floor. Stale leftovers from old sessions
+                -- and hub-pointing writes get deleted so a MANUAL floor switch
+                -- can never trip the rescue
+                if cfg.at and os.time() - cfg.at < 600 and cfg.targetPlace ~= OML_RELOAD_PLACE then
+                    return cfg.targetPlace
+                end
+                if delfile then pcall(delfile, file) end
             end
         end
     end
 end
 
 local wantFloor = hopTargetFloor()
-if not wantFloor then
-    -- restart gate armed but no config survived: our remembered home floor
-    local ok, flag = pcall(readfile, RESTART_GATE_FILE)
-    if ok and flag == '1' and isfile and isfile(LASTFLOOR_FILE) then
-        local ok2, saved = pcall(readfile, LASTFLOOR_FILE)
-        if ok2 then wantFloor = tonumber(saved) end
-    end
-end
 
 -- The Between is a party place: never yank someone out of a dungeon run for a
 -- stale floor config
@@ -839,7 +838,11 @@ local joinGateArmed = (function()
     if IN_BETWEEN then return false end -- the other players are your party
     if not (isfile and readfile) or not isfile(RESTART_GATE_FILE) then return false end
     local ok, flag = pcall(readfile, RESTART_GATE_FILE)
-    return ok and flag == '1'
+    if not (ok and flag == '1') then return false end
+    -- the flag alone is NOT enough: it lingers after the toggle's turned off
+    -- and a manual floor change would get blocked+hopped. Only gate right
+    -- after one of our own hops actually wrote a config
+    return hopTargetFloor() ~= nil
 end)()
 
 local isGateExempt = function(player)
@@ -892,6 +895,7 @@ local joinGateBlockAndHop = function()
                 active = true,
                 targetPlace = game.PlaceId,
                 position = saved or { x = pos.X, y = pos.Y, z = pos.Z },
+                at = os.time(),
             }))
         end
     end)
