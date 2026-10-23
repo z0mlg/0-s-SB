@@ -64,6 +64,15 @@ do
             box:AddDivider({ Text = 'Indicators' })
             box:AddToggle(prefix .. 'EquipItem', { Text = 'Equipped item', Default = false })
             box:AddToggle(prefix .. 'Equipment', { Text = 'Equipment', Default = false })
+            box:AddSlider(prefix .. 'EquipSize', {
+                Text = 'Icon size',
+                Default = 48,
+                Min = 16,
+                Max = 100,
+                Rounding = 0,
+                Suffix = 'px',
+                Compact = true,
+            })
             box:AddToggle(prefix .. 'ProfilePic', { Text = 'Profile picture', Default = false })
         end
 
@@ -106,8 +115,11 @@ do
             setVis(prefix .. 'ChamsMode', chamsOn)
             setVis(prefix .. 'ChamsRender', chamsOn)
             setVis(prefix .. 'TracerOrigin', Toggles[prefix .. 'Tracer'].Value)
+            if isPlayer then
+                setVis(prefix .. 'EquipSize', Toggles[prefix .. 'Equipment'].Value)
+            end
         end
-        for _, id in ipairs({ 'Box', 'Name', 'HealthText', 'Chams', 'Tracer' }) do
+        for _, id in ipairs({ 'Box', 'Name', 'HealthText', 'Chams', 'Tracer', 'Equipment' }) do
             Toggles[prefix .. id]:OnChanged(syncVis)
         end
         syncVis()
@@ -317,9 +329,9 @@ do
         end
     end
 
-    local function makeFallbackSlot(s)
+    local function makeFallbackSlot(s, px)
         local slot = Instance.new('ImageLabel')
-        slot.Size = UDim2.fromOffset(SLOT_PX, SLOT_PX)
+        slot.Size = UDim2.fromOffset(px or 48, px or 48)
         slot.BackgroundTransparency = 1
         slot.Image = 'rbxassetid://3570695787'
         slot.ImageColor3 = RARITY_COLORS[s.rarity] or RARITY_COLORS.Common
@@ -351,14 +363,14 @@ do
         return slot
     end
 
-    local SLOT_PX = 80
-    local function updateEquipBar(kit, slots)
+    local function updateEquipBar(kit, slots, px)
+        px = px or 48
         local tpl = getSlotTemplate()
         local parts = {}
         for i, s in ipairs(slots) do
             parts[i] = s.icon .. ':' .. s.rarity .. ':' .. tostring(s.upgrade)
         end
-        local sig = table.concat(parts, '|') .. (tpl and ':t' or ':f')
+        local sig = table.concat(parts, '|') .. px .. (tpl and ':t' or ':f')
         if sig == kit.equipSig then return end
         kit.equipSig = sig
         if not kit.equipBar then
@@ -376,22 +388,22 @@ do
         for _, c in ipairs(kit.equipBar:GetChildren()) do
             if c:IsA('GuiObject') then c:Destroy() end
         end
-        local w = #slots * SLOT_PX + (#slots - 1) * 3
+        local w = #slots * px + (#slots - 1) * 3
         kit.equipBarW = w
-        kit.equipBarH = SLOT_PX + 4
-        kit.equipBar.Size = UDim2.fromOffset(w, SLOT_PX + 4)
+        kit.equipBarH = px + 4
+        kit.equipBar.Size = UDim2.fromOffset(w, px + 4)
         local tplBase = tpl and math.max(tpl.Size.Y.Offset, 1)
         for _, s in ipairs(slots) do
             local slot
             if tpl then
                 slot = tpl:Clone()
-                slot.Size = UDim2.fromOffset(SLOT_PX, SLOT_PX)
+                slot.Size = UDim2.fromOffset(px, px)
                 local sc = Instance.new('UIScale')
-                sc.Scale = SLOT_PX / tplBase
+                sc.Scale = px / tplBase
                 sc.Parent = slot
                 fillGameSlot(slot, s)
             else
-                slot = makeFallbackSlot(s)
+                slot = makeFallbackSlot(s, px)
             end
             slot.Parent = kit.equipBar
         end
@@ -726,7 +738,7 @@ do
                         kit.equipSlots = getEquipSlots(plr)
                     end
                     if kit.equipSlots then
-                        updateEquipBar(kit, kit.equipSlots)
+                        updateEquipBar(kit, kit.equipSlots, cfg.equipSize)
                         equipBarH = kit.equipBarH or 28
                     end
                 end
@@ -941,6 +953,7 @@ do
             healthBased = T[prefix .. 'HealthBased'].Value,
             equipItem = T[prefix .. 'EquipItem'] and T[prefix .. 'EquipItem'].Value,
             equipment = T[prefix .. 'Equipment'] and T[prefix .. 'Equipment'].Value,
+            equipSize = O[prefix .. 'EquipSize'] and O[prefix .. 'EquipSize'].Value or 48,
             profilePic = T[prefix .. 'ProfilePic'] and T[prefix .. 'ProfilePic'].Value,
             chams = T[prefix .. 'Chams'].Value,
             chamsColor = O[prefix .. 'ChamsColor'].Value,
