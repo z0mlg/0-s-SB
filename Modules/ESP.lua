@@ -119,8 +119,11 @@ do
                 setVis(prefix .. 'EquipSize', Toggles[prefix .. 'Equipment'].Value)
             end
         end
-        for _, id in ipairs({ 'Box', 'Name', 'HealthText', 'Chams', 'Tracer', 'Equipment' }) do
+        for _, id in ipairs({ 'Box', 'Name', 'HealthText', 'Chams', 'Tracer' }) do
             Toggles[prefix .. id]:OnChanged(syncVis)
+        end
+        if isPlayer then -- MobEsp has no Equipment toggle to watch
+            Toggles[prefix .. 'Equipment']:OnChanged(syncVis)
         end
         syncVis()
     end
