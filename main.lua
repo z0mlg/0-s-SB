@@ -833,8 +833,19 @@ if wantFloor and wantFloor ~= game.PlaceId
     return -- nothing runs on a floor we didn't ask for
 end
 
+-- panic gate: same per-account flag pattern, written by the PlayerPanic /
+-- PanicBlockHop toggles. Unlike the restart gate it needs NO hop config -
+-- "panic on players" means block + hop on EVERY populated landing.
+local PANIC_GATE_FILE = `Bluu/Swordburst 2/panicgate_{LocalPlayer.UserId}`
+local panicGateOn = (function()
+    if not (isfile and readfile) or not isfile(PANIC_GATE_FILE) then return false end
+    local ok, flag = pcall(readfile, PANIC_GATE_FILE)
+    return ok and flag == '1'
+end)()
+
 local joinGateArmed = (function()
     if IN_BETWEEN then return false end -- the other players are your party
+    if panicGateOn then return true end
     if not (isfile and readfile) or not isfile(RESTART_GATE_FILE) then return false end
     local ok, flag = pcall(readfile, RESTART_GATE_FILE)
     if not (ok and flag == '1') then return false end
@@ -845,8 +856,15 @@ local joinGateArmed = (function()
 end)()
 
 local isGateExempt = function(player)
-    -- restart gate: EVERYONE else is a threat - no friend/whitelist exemptions
-    return player == LocalPlayer
+    if player == LocalPlayer then return true end
+    -- panic gate keeps friend exemptions (the PanicWhitelist dropdown lives in
+    -- module options - unreadable before modules load; friends are checkable)
+    if panicGateOn then
+        local ok, friends = pcall(function() return LocalPlayer:IsFriendsWith(player.UserId) end)
+        return ok and friends
+    end
+    -- restart gate: EVERYONE else is a threat
+    return false
 end
 
 local lastGateTeleport

@@ -149,9 +149,8 @@ ModDetector:AddToggle('PlayerPanic', {
 ModDetector:AddToggle('PanicBlockHop', {
     Text = 'Panic: block + server hop',
     Default = true,
-    Tooltip = 'If they are still here after the delay: block them and hop to a fresh server. Off = just stay at spawn looking AFK'
+    Tooltip = 'Block one of them and hop to a fresh server instantly. Off = just stay at spawn looking AFK'
 })
-ModDetector:AddSlider('PanicPlayerDelay', { Text = 'Block + hop after', Default = 30, Min = 5, Max = 120, Rounding = 0, Suffix = 's', Compact = true })
 ModDetector:AddDropdown('PanicWhitelist', { Text = 'Panic whitelist', Values = {}, SpecialType = 'Player', Multi = true, AllowNull = true })
 
 local panicSweep -- forward decl: defined with the panic system below
@@ -209,8 +208,9 @@ end)
 -- ===================== PLAYER PANIC =====================
 -- Any non-exempt player (not us, not whitelisted, not a friend) in the server:
 -- sweep every suspicious toggle off, respawn so we land back at spawn, keep
--- autoswing running so we just look AFK. If the offender is still here after
--- PanicPlayerDelay seconds: block them and hop to a fresh server.
+-- autoswing running so we just look AFK. PanicBlockHop on: block one of them
+-- and hop to a fresh server immediately - the join gate (panicgate file) does
+-- the same on every landing until the server is empty.
 
 -- Only the suspicious stuff gets swept: things that attack around us or
 -- move/teleport our character. Visual/client-side features stay on.
@@ -274,12 +274,11 @@ end
 local panicHopping = false
 
 local panicWatch = function(player)
-    if panicWatching[player] then return end
+    if panicWatching[player] or panicHopping then return end
     panicWatching[player] = true
 
-    task.delay(Options.PanicPlayerDelay.Value, function()
+    task.spawn(function()
         panicWatching[player] = nil
-        if panicHopping then return end
         if not (Toggles.PlayerPanic and Toggles.PlayerPanic.Value) then return end
         if not (Toggles.PanicBlockHop and Toggles.PanicBlockHop.Value) then return end -- stay put, look AFK
 
@@ -293,19 +292,13 @@ local panicWatch = function(player)
         if #offenders == 0 then return end -- everyone's gone, nothing to block
 
         panicHopping = true
-        -- block 1 in the background; poll the blocklist every 0.5s and bounce
-        -- the instant it confirms (or the target's simply gone)
-        local target = offenders[1]
-        task.spawn(blockPlayer, target)
+        -- block synchronously (modal flow retries on its own), then bail -
+        -- no blocklist verification: speed beats certainty when someone's here
+        blockPlayer(offenders[1])
 
         -- resume this floor + position after the hub bounce makes a new server
         if saveServerSwitchConfig and HumanoidRootPart then
             saveServerSwitchConfig(game.PlaceId, panicResumePos or HumanoidRootPart.Position)
-        end
-        local deadline = tick() + 15
-        while target.Parent and tick() < deadline do
-            if isPlayerBlocked(target) then break end
-            task.wait(0.5)
         end
         pcall(function()
             game:GetService('TeleportService'):Teleport(659222129, LocalPlayer)
@@ -331,7 +324,15 @@ Players.PlayerRemoving:Connect(function()
     panicHopping = false
 end)
 
+-- per-account flag like restartgate: the join gate (main.lua) blocks + hops on
+-- every landing while it's armed. Armed only when panic AND block+hop are on.
+local writePanicGate = function()
+    pcall(writefile, `Bluu/Swordburst 2/panicgate_{LocalPlayer.UserId}`,
+        (Toggles.PlayerPanic.Value and Toggles.PanicBlockHop.Value) and '1' or '0')
+end
+
 Toggles.PlayerPanic:OnChanged(function(value)
+    writePanicGate()
     if value then
         for _, player in next, Players:GetPlayers() do
             panicCheck(player)
@@ -358,6 +359,7 @@ end)
 -- enabling block+hop while already panicked re-arms the watch for anyone
 -- still inside (fresh delay) instead of silently doing nothing
 Toggles.PanicBlockHop:OnChanged(function(value)
+    writePanicGate()
     if not (value and panicSwept) then return end
     for _, player in next, Players:GetPlayers() do
         if not isPanicExempt(player) then
