@@ -42,8 +42,15 @@ Misc1:AddDropdown('PerformanceBoosters', {
     end
 end)
 
+-- connections outlive option registration on stale/partial loads - never index
+-- a missing option
+local function perfOn(name)
+    local pb = Options.PerformanceBoosters
+    return pb and pb.Value and pb.Value[name] == true
+end
+
 workspace:WaitForChild('HitEffects').ChildAdded:Connect(function(hitPart)
-    if not Options.PerformanceBoosters.Value['No damage particles'] then return end
+    if not perfOn('No damage particles') then return end
     task.wait()
     hitPart:Destroy()
 end)
@@ -53,9 +60,9 @@ if RequiredServices then
     RequiredServices.Graphics.ServerEvent = function(...)
         local args = {...}
         if args[1][1] == 'Damage Text' then
-            if Options.PerformanceBoosters.Value['No damage text'] then return end
+            if perfOn('No damage text') then return end
         elseif args[1][1] == 'KillFade' then
-            if Options.PerformanceBoosters.Value['Delete dead mobs'] then
+            if perfOn('Delete dead mobs') then
                 return args[1][2]:Destroy()
             end
         end
@@ -66,20 +73,20 @@ if RequiredServices then
     RequiredServices.UI.ServerEvent = function(...)
         local args = {...}
         if args[1][2] == 'VelObtained' then
-            if Options.PerformanceBoosters.Value['No vel obtained in chat'] then return end
+            if perfOn('No vel obtained in chat') then return end
         end
         return UIServerEventOld(...)
     end
 else
     workspace.ChildAdded:Connect(function(part)
-        if not Options.PerformanceBoosters.Value['Damage Text'] then return end
+        if not perfOn('Damage Text') then return end
         if part:IsA('Part') then return end
         if not part:WaitForChild('DamageText', 1) then return end
         part:Destroy()
     end)
 
     Chat.ScrollContent.ChildAdded:Connect(function(frame)
-        if not Options.PerformanceBoosters.Value['No vel obtained in chat'] then return end
+        if not perfOn('No vel obtained in chat') then return end
         if frame.Name ~= 'ChatVelTemplate' then return end
         frame.Visible = false
         frame.Size = UDim2.fromOffset(0, -5)

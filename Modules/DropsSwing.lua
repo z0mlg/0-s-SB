@@ -141,8 +141,9 @@ if RequiredServices then
     local AttackRequestOld = RequiredServices.Combat.AttackRequest
     RequiredServices.Combat.AttackRequest = function(...)
         local args = {...}
-        if Toggles.OverrideBurstState.Value then
-            debug.setupvalue(args[3], 2, Options.BurstState.Value)
+        local t = Toggles.OverrideBurstState
+        if t and t.Value then
+            debug.setupvalue(args[3], 2, Options.BurstState and Options.BurstState.Value or 0)
         end
         return AttackRequestOld(...)
     end
