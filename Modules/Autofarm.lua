@@ -1220,6 +1220,7 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         if shouldUpdateTarget then
             shouldUpdateTarget = false
             target = getAutofarmTarget()
+            autofarmTarget = target -- global: path farming checks we're not mid-kill
             task.delay(0.15, function()
                 shouldUpdateTarget = true
             end)

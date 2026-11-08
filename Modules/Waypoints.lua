@@ -222,6 +222,13 @@ end
 -- the instant every nearby mob is tagged (empty spots still wait the 7s so we
 -- don't teleport-spam past mobs that haven't spawned/registered yet).
 local pathFarmClear = function(anchorPos, elapsed)
+    -- never advance mid-kill: the current target can chase or drift outside the
+    -- anchor's radius and read as 'clear' - alive target = stay put
+    local fighting = autofarmTarget
+    if fighting and fighting.Parent and not isDead(fighting) and not mobIsImmortal(fighting) then
+        return false
+    end
+
     local tagMode = Toggles.TagMode and Toggles.TagMode.Value
     if not tagMode and elapsed < 7 then return false end
 
