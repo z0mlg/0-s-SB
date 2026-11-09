@@ -472,6 +472,7 @@ Killaura:AddToggle('Killaura', { Text = 'Enabled' }):OnChanged(function()
             if tagGate(target) then continue end
             local rootPart = target:FindFirstChild('HumanoidRootPart')
             if not rootPart then continue end
+            if mobInVoid and mobInVoid(target, rootPart.Position) then continue end
             local targetPos = rootPart.Position + Vector3.new(
                 0,
                 (HumanoidRootPart.Size.Y - rootPart.Size.Y) * 0.5,

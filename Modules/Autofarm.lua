@@ -110,6 +110,20 @@ mobIsImmortal = function(mob)
     return false
 end
 
+-- mobs that fell into the void: they keep dropping below their spawn height,
+-- so chasing one drags us down with it while the rest of the wave despawns.
+-- Track each mob's peak Y (spawned-at-floor level only ever rises); 60+ studs
+-- under its own peak = gone, skip it.
+local mobPeakY = setmetatable({}, { __mode = 'k' })
+mobInVoid = function(mob, mobPos)
+    local peak = mobPeakY[mob]
+    if not peak or mobPos.Y > peak then
+        mobPeakY[mob] = mobPos.Y
+        return false
+    end
+    return peak - mobPos.Y > 60
+end
+
 -- 'Bob' survive wave: keep a large fixed distance from every Bob - it can't
 -- reach past it, and Bob himself is never a valid target
 local bobDistance = function()
@@ -153,6 +167,7 @@ local getAutofarmTarget = function()
         local mobRoot = mob:FindFirstChild('HumanoidRootPart')
         local mobPos = mobRoot and mobRoot.Position
         if not mobPos then continue end
+        if mobInVoid(mob, mobPos) then continue end
 
         -- wave objective: glowing mobs must actually die, so they jump every
         -- queue - ignore/tag/assist/waypoint rules don't apply to them
@@ -1220,7 +1235,6 @@ Autofarm:AddToggle('Autofarm', { Text = 'Enabled' }):OnChanged(function()
         if shouldUpdateTarget then
             shouldUpdateTarget = false
             target = getAutofarmTarget()
-            autofarmTarget = target -- global: path farming checks we're not mid-kill
             task.delay(0.15, function()
                 shouldUpdateTarget = true
             end)
